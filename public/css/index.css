@@ -30,10 +30,30 @@
 .active-link {
    color: #4a748a;
    font-weight: 700;
+   background-color: #b3d1e0;
+   border-radius: 0.5rem;
+   padding: 0.75rem 1rem;
+   margin: 0.25rem 0;
+   display: block;
+   transition: all 0.2s ease;
+   box-shadow: 0 2px 4px rgba(0,0,0,0.1);
 }
 
 .inactive-link {
    color: #7fabbd;
+   padding: 0.75rem 1rem;
+   margin: 0.25rem 0;
+   display: block;
+   border-radius: 0.5rem;
+   transition: all 0.2s ease;
+   font-weight: 500;
+}
+
+.inactive-link:hover {
+   background-color: rgba(179, 209, 224, 0.3);
+   color: #4a748a;
+   transform: translateX(4px);
+   box-shadow: 0 2px 8px rgba(0,0,0,0.1);
 }
 
 .table-primary th {
@@ -69,6 +89,56 @@
 
 .side-bar-height {
    height: 90vh;
+   border-radius: 1rem;
+   overflow: hidden;
+   display: flex;
+   flex-direction: column;
+}
+
+/* Sidebar improvements */
+.card.side-bar-height {
+   background: linear-gradient(135deg, #ffffff 0%, #f8f9fa 100%);
+   border: 1px solid rgba(0,0,0,0.05);
+}
+
+.card-header.bg-blue-secondary {
+   background: linear-gradient(135deg, #7fabbd 0%, #6a9bb3 100%) !important;
+   border: none;
+   padding: 1.5rem 1rem;
+   position: relative;
+   z-index: 10;
+}
+
+.card-header.bg-blue-secondary h4 {
+   color: #ffffff;
+   font-size: 1.25rem;
+   font-weight: 700;
+   margin: 0;
+   text-shadow: 0 1px 2px rgba(0,0,0,0.1);
+}
+
+.list-group-item {
+   background: transparent;
+   border: none;
+   padding: 0.5rem 1rem;
+}
+
+/* Logout section styling */
+.sidebar-logout {
+   margin-top: auto;
+   padding: 1rem;
+   border-top: 1px solid rgba(0,0,0,0.1);
+   background: rgba(248, 249, 250, 0.5);
+}
+
+.sidebar-logout .btn {
+   font-weight: 500;
+   transition: all 0.2s ease;
+}
+
+.sidebar-logout .btn:hover {
+   transform: translateY(-1px);
+   box-shadow: 0 2px 4px rgba(0,0,0,0.1);
 }
 
 @media (max-width: 991px) {
@@ -154,4 +224,214 @@
 .datatable-pagination .page-item.active .page-link {
    background-color: #4a748a;
    border-color: #4a748a;
+}
+
+/* API Credentials Table Styling */
+.table-responsive {
+   border-radius: 0.75rem;
+   overflow: hidden;
+   box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+}
+
+.table {
+   margin-bottom: 0;
+   border-radius: 0.75rem;
+   overflow: hidden;
+}
+
+.table thead th {
+   border: none;
+   padding: 1rem 0.75rem;
+   font-weight: 600;
+   letter-spacing: 0.05em;
+}
+
+.table tbody td {
+   border: none;
+   padding: 0.75rem;
+   vertical-align: middle;
+}
+
+.table-hover tbody tr:hover {
+   background-color: rgba(127, 171, 189, 0.08);
+   transform: translateY(-1px);
+   box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+   transition: all 0.3s ease;
+}
+
+.table tbody tr {
+   border-bottom: 1px solid rgba(0,0,0,0.05);
+}
+
+.table tbody tr:last-child {
+   border-bottom: none;
+}
+
+/* Badge improvements */
+.badge {
+   font-weight: 500;
+   letter-spacing: 0.025em;
+   font-size: 0.75rem;
+}
+
+.rounded-pill {
+   border-radius: 50rem !important;
+}
+
+.rounded-2 {
+   border-radius: 0.5rem !important;
+}
+
+.bg-primary-subtle {
+   background-color: rgba(13, 110, 253, 0.1) !important;
+}
+
+.bg-success-subtle {
+   background-color: rgba(25, 135, 84, 0.1) !important;
+}
+
+.bg-warning-subtle {
+   background-color: rgba(255, 193, 7, 0.1) !important;
+}
+
+.bg-secondary-subtle {
+   background-color: rgba(108, 117, 125, 0.1) !important;
+}
+
+/* Button group improvements */
+.btn-group .btn {
+   border-radius: 0.5rem;
+   margin: 0 0.125rem;
+   font-weight: 500;
+   transition: all 0.2s ease;
+}
+
+.btn-group .btn:hover {
+   transform: translateY(-1px);
+   box-shadow: 0 4px 8px rgba(0,0,0,0.15);
+}
+
+.btn-group .btn:first-child {
+   margin-left: 0;
+}
+
+.btn-group .btn:last-child {
+   margin-right: 0;
+}
+
+/* Individual button styling */
+.btn-sm {
+   padding: 0.5rem 0.75rem;
+   font-size: 0.875rem;
+   line-height: 1.25rem;
+}
+
+/* Card header improvements */
+.card-header.bg-white {
+   background-color: #ffffff !important;
+   border-bottom: 1px solid #e9ecef;
+}
+
+/* Main content area improvements */
+main {
+   background-color: #f8f9fa;
+   min-height: 100vh;
+}
+
+/* Ensure no duplicate headers */
+body {
+   margin: 0;
+   padding: 0;
+}
+
+/* Hide any potential duplicate titles */
+h1, h2, h3, h4, h5, h6 {
+   margin-top: 0;
+}
+
+/* Ensure sidebar is properly positioned */
+aside {
+   position: relative;
+   z-index: 5;
+}
+
+.container {
+   background-color: transparent;
+}
+
+/* Page title consistency */
+h2 {
+   color: #2c3e50;
+   font-weight: 700;
+   letter-spacing: -0.025em;
+}
+
+/* Card consistency */
+.card {
+   border: 1px solid rgba(0,0,0,0.05);
+   border-radius: 0.75rem;
+   box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px 0 rgba(0, 0, 0, 0.06);
+}
+
+.card-header {
+   border-radius: 0.75rem 0.75rem 0 0 !important;
+}
+
+/* Form styling consistency */
+.form-label {
+   font-weight: 600;
+   color: #374151;
+   margin-bottom: 0.5rem;
+}
+
+.form-control {
+   border-radius: 0.5rem;
+   border: 1px solid #d1d5db;
+   transition: all 0.2s ease;
+}
+
+.form-control:focus {
+   border-color: #7fabbd;
+   box-shadow: 0 0 0 0.2rem rgba(127, 171, 189, 0.25);
+}
+
+.form-control-lg {
+   padding: 0.75rem 1rem;
+   font-size: 1rem;
+}
+
+/* Input group styling */
+.input-group .btn {
+   border-radius: 0 0.5rem 0.5rem 0;
+}
+
+.input-group .form-control {
+   border-radius: 0.5rem 0 0 0.5rem;
+}
+
+/* Responsive improvements */
+@media (max-width: 768px) {
+   .btn-group {
+      flex-direction: column;
+      width: 100%;
+   }
+   
+   .btn-group .btn {
+      border-radius: 0.375rem !important;
+      margin-bottom: 0.25rem;
+   }
+   
+   .btn-group .btn:last-child {
+      margin-bottom: 0;
+   }
+   
+   .d-flex.justify-content-between {
+      flex-direction: column;
+      align-items: flex-start !important;
+   }
+   
+   .d-flex.justify-content-between .btn-group {
+      margin-top: 1rem;
+      width: 100%;
+   }
 }

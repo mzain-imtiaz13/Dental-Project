@@ -15,6 +15,11 @@ class LoginController extends Controller
      */
     public function showLoginForm()
     {
+        // Redirect authenticated users to dashboard
+        if (Auth::check()) {
+            return redirect()->route('dashboard');
+        }
+        
         return view('login'); // resources/views/login.blade.php
     }
 

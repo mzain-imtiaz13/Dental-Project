@@ -3,6 +3,8 @@
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\Auth\LoginController;
 use App\Http\Controllers\UserController;
+use App\Http\Controllers\ApiCredentialController;
+use App\Http\Controllers\OAuthController;
 use App\Models\User;
 
 /*
@@ -15,6 +17,8 @@ use App\Models\User;
 Route::get('/', function () {
     return redirect()->route('login');
 });
+
+
 
 // Auth routes
 Route::get('/login', [LoginController::class, 'showLoginForm'])->name('login');
@@ -50,4 +54,15 @@ Route::middleware('auth')->group(function () {
 
     // 🚀 Store new user
     Route::post('/users', [UserController::class, 'store'])->name('users.store');
+
+    // API Credentials Management
+    Route::resource('api-credentials', ApiCredentialController::class);
+    Route::patch('api-credentials/{apiCredential}/toggle', [ApiCredentialController::class, 'toggle'])->name('api-credentials.toggle');
+    Route::post('api-credentials/{apiCredential}/test', [ApiCredentialController::class, 'test'])->name('api-credentials.test');
+    
+    // OAuth Routes
+    Route::get('/oauth/authorize', [OAuthController::class, 'authorize'])->name('oauth.authorize');
+    Route::get('/oauth/callback', [OAuthController::class, 'callback'])->name('oauth.callback');
+    Route::post('/oauth/{apiCredential}/refresh', [OAuthController::class, 'refresh'])->name('oauth.refresh');
+    Route::post('/oauth/{apiCredential}/fetch-data', [OAuthController::class, 'fetchData'])->name('oauth.fetch-data');
 });

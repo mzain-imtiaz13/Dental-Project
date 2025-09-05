@@ -63,7 +63,64 @@
             </div>
         </div>
 
-        
+        <!-- API Integration Section -->
+        <div class="row g-3 mb-4">
+            <div class="col-12">
+                <div class="card shadow-sm">
+                    <div class="card-header">
+                        <h5 class="card-title mb-0">
+                            <i class="bi bi-plug me-2"></i>API Integrations
+                        </h5>
+                    </div>
+                    <div class="card-body">
+                        <p class="text-muted mb-3">Manage API credentials for external services to fetch orders and patient data.</p>
+                        <div class="row g-3">
+                            <div class="col-md-4">
+                                <div class="card border-primary h-100">
+                                    <div class="card-body text-center">
+                                        <i class="bi bi-link-45deg fa-2x text-primary mb-3"></i>
+                                        <h6 class="card-title">Medit Link</h6>
+                                        <p class="card-text small text-muted">Dental case management and patient data</p>
+                                        <a href="{{ route('api-credentials.create', ['api' => 'medit_link']) }}" class="btn btn-primary btn-sm">
+                                            <i class="bi bi-plus"></i> Add Credentials
+                                        </a>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-4">
+                                <div class="card border-success h-100">
+                                    <div class="card-body text-center">
+                                        <i class="bi bi-cpu fa-2x text-success mb-3"></i>
+                                        <h6 class="card-title">DS Core</h6>
+                                        <p class="card-text small text-muted">Scan analysis and case processing</p>
+                                        <a href="{{ route('api-credentials.create', ['api' => 'ds_core']) }}" class="btn btn-success btn-sm">
+                                            <i class="bi bi-plus"></i> Add Credentials
+                                        </a>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-4">
+                                <div class="card border-info h-100">
+                                    <div class="card-body text-center">
+                                        <i class="bi bi-box fa-2x text-info mb-3"></i>
+                                        <h6 class="card-title">3Shape</h6>
+                                        <p class="card-text small text-muted">CAD/CAM design and manufacturing</p>
+                                        <a href="{{ route('api-credentials.create', ['api' => '3shape']) }}" class="btn btn-info btn-sm">
+                                            <i class="bi bi-plus"></i> Add Credentials
+                                        </a>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="text-center mt-3">
+                            <a href="{{ route('api-credentials.index') }}" class="btn btn-outline-secondary">
+                                <i class="bi bi-gear"></i> Manage All API Credentials
+                            </a>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
 
     </div>
 @endsection
