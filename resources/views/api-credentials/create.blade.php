@@ -30,117 +30,81 @@
                         </div>
                     @endif
                     
-                    <form action="{{ route('api-credentials.store') }}" method="POST">
+                    <form id="credentialsForm" action="{{ route('api-credentials.store') }}" method="POST">
                         @csrf
-                        
-                        <div class="row">
-                            <div class="col-md-6">
-                                <div class="mb-3">
-                                    <label for="api_name" class="form-label">API Name <span class="text-danger">*</span></label>
-                                    <select class="form-select @error('api_name') is-invalid @enderror" id="api_name" name="api_name" required>
-                                        <option value="">Select API</option>
-                                        @foreach($apiNames as $key => $name)
-                                            <option value="{{ $key }}" {{ old('api_name', $apiName) == $key ? 'selected' : '' }}>
-                                                {{ $name }}
-                                            </option>
-                                        @endforeach
-                                    </select>
-                                    @error('api_name')
-                                        <div class="invalid-feedback">{{ $message }}</div>
-                                    @enderror
-                                </div>
-                            </div>
-                            <div class="col-md-6">
-                                <div class="mb-3">
-                                    <label for="client_id" class="form-label">Client ID <span class="text-danger">*</span></label>
-                                    <input type="text" class="form-control @error('client_id') is-invalid @enderror" 
-                                           id="client_id" name="client_id" value="{{ old('client_id') }}" required>
-                                    @error('client_id')
-                                        <div class="invalid-feedback">{{ $message }}</div>
-                                    @enderror
-                                </div>
-                            </div>
+                        <div class="mb-3">
+                            <label for="api_name" class="form-label">API Name</label>
+                            <select name="api_name" id="api_name" class="form-control" required>
+                                @foreach($apiNames as $value => $label)
+                                    <option value="{{ $value }}" {{ $apiName == $value ? 'selected' : '' }}>
+                                        {{ $label }}
+                                    </option>
+                                @endforeach
+                            </select>
                         </div>
 
                         <div class="mb-3">
-                            <label for="client_secret" class="form-label">Client Secret <span class="text-danger">*</span></label>
-                            <div class="input-group">
-                                <input type="password" class="form-control @error('client_secret') is-invalid @enderror" 
-                                       id="client_secret" name="client_secret" value="{{ old('client_secret') }}" required>
-                                <button class="btn btn-outline-secondary" type="button" id="toggleClientSecret">
-                                    <i class="bi bi-eye"></i>
-                                </button>
-                            </div>
-                            @error('client_secret')
-                                <div class="invalid-feedback">{{ $message }}</div>
-                            @enderror
+                            <label for="client_id" class="form-label">Client ID</label>
+                            <input type="text" class="form-control" id="client_id" name="client_id" required>
                         </div>
 
                         <div class="mb-3">
-                            <label for="base_url" class="form-label">Base URL</label>
-                            <input type="url" class="form-control @error('base_url') is-invalid @enderror" 
-                                   id="base_url" name="base_url" value="{{ old('base_url') }}" 
-                                   placeholder="https://api.example.com">
-                            @error('base_url')
-                                <div class="invalid-feedback">{{ $message }}</div>
-                            @enderror
-                            <div class="form-text">Optional: Base URL for the API endpoint</div>
+                            <label for="client_secret" class="form-label">Client Secret</label>
+                            <input type="password" class="form-control" id="client_secret" name="client_secret" required>
                         </div>
 
                         <div class="mb-3">
-                            <label for="additional_config" class="form-label">Additional Configuration</label>
-                            <textarea class="form-control @error('additional_config') is-invalid @enderror" 
-                                      id="additional_config" name="additional_config" rows="4" 
-                                      placeholder='{"key": "value"}'>{{ old('additional_config') }}</textarea>
-                            @error('additional_config')
-                                <div class="invalid-feedback">{{ $message }}</div>
-                            @enderror
-                            <div class="form-text">Optional: JSON configuration for API-specific settings</div>
+                            <label for="base_url" class="form-label">Base URL (Optional)</label>
+                            <input type="url" class="form-control" id="base_url" name="base_url" 
+                                   placeholder="https://dev-openapi-auth.meditlink.com">
                         </div>
 
                         <div class="mb-3">
                             <div class="form-check">
+                                <input type="hidden" name="is_active" value="0">
                                 <input class="form-check-input" type="checkbox" id="is_active" name="is_active" 
-                                       {{ old('is_active', true) ? 'checked' : '' }}>
-                                <label class="form-check-label" for="is_active">
-                                    Active
-                                </label>
+                                       value="1" checked>
+                                <label class="form-check-label" for="is_active">Active</label>
                             </div>
-                            <div class="form-text">Check to make these credentials active immediately</div>
                         </div>
 
-                        <div class="d-grid gap-2 d-md-flex justify-content-md-end mt-4">
-                            <a href="{{ route('api-credentials.index') }}" class="btn btn-outline-secondary me-md-2">
-                                <i class="bi bi-x-circle me-1"></i> Cancel
-                            </a>
-                            <button type="submit" class="btn btn-primary">
-                                <i class="bi bi-check-circle me-1"></i> Save Credentials
-                            </button>
+                        <div class="d-grid gap-2">
+                            <button type="submit" class="btn btn-primary">Save & Connect</button>
                         </div>
                     </form>
+
+                    @push('scripts')
+                    <script>
+                    document.getElementById('credentialsForm').addEventListener('submit', async function(e) {
+                        e.preventDefault();
+                        
+                        try {
+                            const response = await fetch(this.action, {
+                                method: 'POST',
+                                body: new FormData(this),
+                                headers: {
+                                    'X-CSRF-TOKEN': '{{ csrf_token() }}',
+                                    'Accept': 'application/json'
+                                }
+                            });
+
+                            const result = await response.json();
+                            
+                            if (result.success) {
+                                window.location.href = result.redirect_url;
+                            } else {
+                                alert('Error: ' + result.message);
+                            }
+                        } catch (error) {
+                            console.error('Error:', error);
+                            alert('Error saving credentials. Please try again.');
+                        }
+                    });
+                    </script>
+                    @endpush
                 </div>
             </div>
         </div>
     </div>
 </div>
-
-<script>
-document.addEventListener('DOMContentLoaded', function() {
-    const toggleButton = document.getElementById('toggleClientSecret');
-    const clientSecretInput = document.getElementById('client_secret');
-    const icon = toggleButton.querySelector('i');
-    
-    toggleButton.addEventListener('click', function() {
-        if (clientSecretInput.type === 'password') {
-            clientSecretInput.type = 'text';
-            icon.classList.remove('bi-eye');
-            icon.classList.add('bi-eye-slash');
-        } else {
-            clientSecretInput.type = 'password';
-            icon.classList.remove('bi-eye-slash');
-            icon.classList.add('bi-eye');
-        }
-    });
-});
-</script>
 @endsection

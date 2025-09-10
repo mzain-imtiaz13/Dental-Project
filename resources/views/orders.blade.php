@@ -67,22 +67,52 @@
     </div>
 
     <script>
-        const rawData = [
-            { id: '12345', patient: 'John Doe', platform: '3Shape', date: '2025-08-26', status: 'Admitted' },
-            { id: '12346', patient: 'Jane Smith', platform: 'DScore', date: '2025-07-15', status: 'Under Observation' },
-            { id: '12347', patient: 'Michael Brown', platform: 'Meditlink', date: '2025-08-01', status: 'Discharged' },
-            { id: '12348', patient: 'Emily White', platform: '3Shape', date: '2025-07-30', status: 'Admitted' },
-            { id: '12349', patient: 'David Clark', platform: 'DScore', date: '2025-06-12', status: 'Under Observation' },
-            { id: '12350', patient: 'Chris Evans', platform: '3Shape', date: '2025-05-20', status: 'Admitted' },
-            { id: '12351', patient: 'Mark Lee', platform: 'Meditlink', date: '2025-08-05', status: 'Discharged' },
-            { id: '12352', patient: 'Sara Park', platform: 'DScore', date: '2025-07-18', status: 'Admitted' },
-            { id: '12353', patient: 'Nina Gomez', platform: '3Shape', date: '2025-06-28', status: 'Under Observation' },
-            { id: '12354', patient: 'Omar Ali', platform: 'Meditlink', date: '2025-06-10', status: 'Admitted' },
-            { id: '12355', patient: 'Laura King', platform: '3Shape', date: '2025-08-10', status: 'Discharged' },
-            { id: '12356', patient: 'Ravi Patel', platform: 'DScore', date: '2025-08-12', status: 'Admitted' },
-        ];
+        let rawData = []; // Will be populated from API
 
         const state = { page: 1, pageSize: 5, search: '', platform: '', status: '' };
+
+        async function fetchOrders() {
+            try {
+                const response = await fetch('{{ route("orders.index") }}', {
+                    headers: {
+                        'Accept': 'application/json',
+                        'X-Requested-With': 'XMLHttpRequest'
+                    }
+                });
+                const result = await response.json();
+                
+                if (result.success) {
+                    // Transform API data to match table structure
+                    rawData = result.data.orders.map(order => ({
+                        id: order.id,
+                        patient: order.patient?.name || 'N/A',
+                        platform: order.source_api,
+                        date: new Date(order.created_at).toLocaleDateString(),
+                        status: order.status,
+                        files: order.case_info?.files || []
+                    }));
+                    renderTable();
+
+                    // Show API status
+                    const statusHtml = Object.entries(result.data.api_statuses)
+                        .map(([api, status]) => `
+                            <div class="alert alert-${status.status === 'error' ? 'danger' : 'success'} mb-2">
+                                <strong>${api}:</strong> ${status.message}
+                            </div>
+                        `).join('');
+                    document.querySelector('.container h2').insertAdjacentHTML('afterend', statusHtml);
+                } else {
+                    throw new Error(result.message);
+                }
+            } catch (error) {
+                console.error('Error:', error);
+                document.querySelector('.container h2').insertAdjacentHTML('afterend', `
+                    <div class="alert alert-danger">
+                        Failed to fetch orders: ${error.message}
+                    </div>
+                `);
+            }
+        }
 
         const tbody = document.querySelector('#ordersTable tbody');
         const pagination = document.getElementById('pagination');
@@ -114,7 +144,14 @@
                     <td>${r.platform}</td>
                     <td>${r.date}</td>
                     <td>${renderStatus(r.status)}</td>
-                    <td><a href="#" class="btn btn-link">Download</a></td>
+                    <td>
+                        ${r.files.length ? 
+                            `<a href="#" class="btn btn-link" onclick="downloadFiles('${r.id}')">
+                                Download (${r.files.length})
+                            </a>` : 
+                            'No files'
+                        }
+                    </td>
                 </tr>
             `).join('');
             renderPagination(data.length);
@@ -165,7 +202,13 @@
             return `<span class="status-badge ${cls}">${status}</span>`;
         }
 
-        renderTable();
+        function downloadFiles(orderId) {
+            // Implement file download logic here
+            console.log('Downloading files for order:', orderId);
+        }
+
+        // Remove the dummy data and fetch real data when page loads
+        document.addEventListener('DOMContentLoaded', fetchOrders);
     </script>
 @endsection
 

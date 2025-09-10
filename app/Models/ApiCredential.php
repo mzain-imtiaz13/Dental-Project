@@ -5,9 +5,12 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Casts\Attribute;
 use Illuminate\Support\Facades\Crypt;
+use Laravel\Sanctum\HasApiTokens;
 
 class ApiCredential extends Model
 {
+    use HasApiTokens;
+
     protected $fillable = [
         'api_name',
         'client_id',
@@ -16,14 +19,14 @@ class ApiCredential extends Model
         'refresh_token',
         'token_expiry',
         'base_url',
-        'additional_config',
-        'is_active'
+        'is_active',
+        'additional_config'
     ];
 
     protected $casts = [
+        'is_active' => 'boolean',
         'token_expiry' => 'datetime',
-        'additional_config' => 'array',
-        'is_active' => 'boolean'
+        'additional_config' => 'array'
     ];
 
     protected $hidden = [

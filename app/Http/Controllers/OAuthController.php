@@ -6,6 +6,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Crypt;
 use App\Models\ApiCredential;
+use Laravel\Sanctum\PersonalAccessToken;
 use Illuminate\Support\Str;
 
 class OAuthController extends Controller
@@ -15,22 +16,33 @@ class OAuthController extends Controller
      */
     public function authorize(Request $request)
     {
-        $apiName = $request->get('api', 'medit_link');
-        $credential = ApiCredential::where('api_name', $apiName)->first();
+        $tempCredentials = session('temp_credentials');
         
-        if (!$credential) {
+        if (!$tempCredentials) {
             return redirect()->route('api-credentials.index')
-                ->with('error', 'No credentials found for ' . $apiName . '. Please add credentials first.');
+                ->with('error', 'No credentials found. Please add credentials first.');
         }
 
+        // Create a temporary credential object for URL building
+        $credential = new ApiCredential($tempCredentials);
+        
         // Generate state parameter for security
         $state = Str::random(40);
-        session(['oauth_state' => $state, 'oauth_api' => $apiName]);
+        session(['oauth_state' => $state]);
 
-        // Build authorization URL
-        $authUrl = $this->buildAuthorizationUrl($credential, $state);
-        
-        return redirect($authUrl);
+        try {
+            // Build authorization URL using temporary credentials
+            $authUrl = $this->buildAuthorizationUrl($credential, $state);
+            return redirect($authUrl);
+        } catch (\Exception $e) {
+            \Log::error('Authorization URL build failed', [
+                'error' => $e->getMessage(),
+                'credentials' => $tempCredentials
+            ]);
+            
+            return redirect()->route('api-credentials.index')
+                ->with('error', 'Failed to initialize OAuth: ' . $e->getMessage());
+        }
     }
 
     /**
@@ -40,52 +52,56 @@ class OAuthController extends Controller
     {
         $code = $request->get('code');
         $state = $request->get('state');
-        $error = $request->get('error');
+        $tempCredentials = session('temp_credentials');
 
-        // Check for errors
-        if ($error) {
+        \Log::info('OAuth callback received', [
+            'has_code' => !empty($code),
+            'has_state' => !empty($state),
+            'has_temp_credentials' => !empty($tempCredentials)
+        ]);
+
+        if (!$code || !$state || !$tempCredentials) {
             return redirect()->route('api-credentials.index')
-                ->with('error', 'OAuth authorization failed: ' . $error);
-        }
-
-        // Verify state parameter
-        if (!$state || $state !== session('oauth_state')) {
-            return redirect()->route('api-credentials.index')
-                ->with('error', 'Invalid state parameter. Please try again.');
-        }
-
-        $apiName = session('oauth_api', 'medit_link');
-        $credential = ApiCredential::where('api_name', $apiName)->first();
-
-        if (!$credential) {
-            return redirect()->route('api-credentials.index')
-                ->with('error', 'No credentials found for ' . $apiName);
+                ->with('error', 'Invalid callback data');
         }
 
         try {
-            // Exchange authorization code for access token
-            $tokenData = $this->exchangeCodeForToken($credential, $code);
+            // Create the API credential record
+            $apiCredential = ApiCredential::create($tempCredentials);
             
-            if ($tokenData) {
-                // Update credential with new tokens
-                $credential->update([
-                    'access_token' => $tokenData['access_token'],
-                    'refresh_token' => $tokenData['refresh_token'] ?? null,
-                    'token_expiry' => now()->addSeconds($tokenData['expires_in'] ?? 3600),
-                ]);
+            \Log::info('API Credential created', [
+                'id' => $apiCredential->id,
+                'api_name' => $apiCredential->api_name
+            ]);
 
-                return redirect()->route('api-credentials.index')
-                    ->with('success', 'Successfully authorized ' . $credential->api_display_name . ' API!');
-            } else {
-                return redirect()->route('api-credentials.index')
-                    ->with('error', 'Failed to obtain access token. Please try again.');
-            }
-        } catch (\Exception $e) {
+            // Exchange code for tokens
+            $tokenData = $this->exchangeCodeForToken($apiCredential, $code);
+            
+            // Update the credential with tokens
+            $apiCredential->update([
+                'access_token' => $tokenData['access_token'],
+                'refresh_token' => $tokenData['refresh_token'] ?? null,
+                'token_expiry' => now()->addSeconds($tokenData['expires_in'] ?? 3600),
+            ]);
+
+            // Clear session data
+            session()->forget(['temp_credentials', 'oauth_state']);
+
             return redirect()->route('api-credentials.index')
-                ->with('error', 'OAuth callback error: ' . $e->getMessage());
-        } finally {
-            // Clean up session
-            session()->forget(['oauth_state', 'oauth_api']);
+                ->with('success', 'API credentials saved successfully');
+
+        } catch (\Exception $e) {
+            \Log::error('OAuth callback failed', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+
+            if (isset($apiCredential)) {
+                $apiCredential->delete();
+            }
+
+            return redirect()->route('api-credentials.index')
+                ->with('error', 'Failed to complete OAuth process: ' . $e->getMessage());
         }
     }
 
@@ -128,7 +144,6 @@ class OAuthController extends Controller
             ], 500);
         }
     }
-
     /**
      * Fetch data from Medit Link API
      */
@@ -164,46 +179,94 @@ class OAuthController extends Controller
      */
     private function buildAuthorizationUrl(ApiCredential $credential, string $state): string
     {
-        $baseUrl = $credential->base_url ?: 'https://dev-openapi-auth.meditlink.com';
-        $authUrl = rtrim($baseUrl, '/') . '/oauth/authorize';
+        if (empty($credential->client_id)) {
+            throw new \InvalidArgumentException('Client ID is required');
+        }
+
+        // Remove trailing slashes and ensure no double slashes
+        $baseUrl = rtrim($credential->base_url ?: 'https://dev-openapi-auth.meditlink.com', '/');
         
-        $params = [
+        $params = http_build_query([
             'client_id' => $credential->client_id,
             'response_type' => 'code',
             'redirect_uri' => route('oauth.callback'),
             'scope' => 'USER GROUP',
             'state' => $state
-        ];
+        ]);
 
-        return $authUrl . '?' . http_build_query($params);
+        $finalUrl = "{$baseUrl}/oauth/authorize?{$params}";
+        
+        // Log the URL for debugging
+        \Log::info('Authorization URL built', [
+            'baseUrl' => $baseUrl,
+            'finalUrl' => $finalUrl,
+            'client_id' => $credential->client_id
+        ]);
+
+        return $finalUrl;
     }
 
     /**
      * Exchange authorization code for access token
      */
-    private function exchangeCodeForToken(ApiCredential $credential, string $code): ?array
+    private function exchangeCodeForToken(ApiCredential $credential, string $code): array
     {
-        $baseUrl = $credential->base_url ?: 'https://dev-openapi-auth.meditlink.com';
-        $tokenUrl = rtrim($baseUrl, '/') . '/oauth/token';
-        
-        $response = Http::timeout(30)
-            ->withOptions([
-                'verify' => false, // Disable SSL verification for development
-            ])
-            ->asForm()
-            ->post($tokenUrl, [
-                'grant_type' => 'authorization_code',
-                'client_id' => $credential->client_id,
-                'client_secret' => $credential->client_secret,
-                'code' => $code,
-                'redirect_uri' => route('oauth.callback'),
+        $baseUrl = rtrim($credential->base_url ?: 'https://stage-openapi-auth.meditlink.com', '/');
+        $tokenUrl = "$baseUrl/oauth/token";
+
+        \Log::info('Token Exchange Request Details', [
+            'tokenUrl' => $tokenUrl,
+            'client_id' => $credential->client_id,
+            'code' => $code,
+            'redirect_uri' => route('oauth.callback')
+        ]);
+
+        // Add Basic Auth header for client credentials
+        $auth = base64_encode($credential->client_id . ':' . $credential->client_secret);
+
+        try {
+            $response = Http::timeout(30)
+                ->withHeaders([
+                    'Authorization' => 'Basic ' . $auth,
+                    'Accept' => 'application/json',
+                    'Content-Type' => 'application/x-www-form-urlencoded'
+                ])
+                ->withOptions([
+                    'verify' => false  // Only for development
+                ])
+                ->asForm()
+                ->post($tokenUrl, [
+                    'grant_type' => 'authorization_code',
+                    'code' => $code,
+                    'redirect_uri' => route('oauth.callback')
+                ]);
+
+            if (!$response->successful()) {
+                \Log::error('Token Exchange Response', [
+                    'status' => $response->status(),
+                    'body' => $response->json(),
+                    'headers' => $response->headers()
+                ]);
+                throw new \Exception('Token exchange failed: ' . $response->body());
+            }
+
+            $tokenData = $response->json();
+            
+            \Log::info('Token Exchange Success', [
+                'has_access_token' => isset($tokenData['access_token']),
+                'has_refresh_token' => isset($tokenData['refresh_token']),
+                'expires_in' => $tokenData['expires_in'] ?? 'not set'
             ]);
 
-        if ($response->successful()) {
-            return $response->json();
-        }
+            return $tokenData;
 
-        throw new \Exception('Token exchange failed: ' . $response->body());
+        } catch (\Exception $e) {
+            \Log::error('Token Exchange Exception', [
+                'message' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+            throw $e;
+        }
     }
 
     /**

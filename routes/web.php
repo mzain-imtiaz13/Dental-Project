@@ -6,6 +6,7 @@ use App\Http\Controllers\UserController;
 use App\Http\Controllers\ApiCredentialController;
 use App\Http\Controllers\OAuthController;
 use App\Models\User;
+use App\Http\Controllers\OrderController;
 
 /*
 |--------------------------------------------------------------------------
@@ -32,10 +33,10 @@ Route::middleware('auth')->group(function () {
         return view('dashboard'); 
     })->name('dashboard');
 
-    Route::get('/orders', function () {
-        return view('orders');
-    })->name('orders');
-
+    Route::get('/orders/view', [OrderController::class, 'view'])->name('orders.view');
+    // Single route for orders
+    Route::get('/orders', [OrderController::class, 'index'])->name('orders.index');
+    
     Route::get('/users', function () {
         $users = User::select('name', 'email', 'role', 'created_at')->get()->map(function ($u) {
             return [

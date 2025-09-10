@@ -13,10 +13,14 @@ class ApiCredentialController extends Controller
      */
     public function index()
     {
-        $credentials = ApiCredential::orderBy('api_name')->orderBy('created_at', 'desc')->get();
-        $apiNames = ApiCredential::getApiNames();
+        $credentials = ApiCredential::all();
+        \Log::info('Fetching API credentials', [
+            'count' => $credentials->count()
+        ]);
         
-        return view('api-credentials.index', compact('credentials', 'apiNames'));
+        return view('api-credentials.index', [
+            'credentials' => $credentials
+        ]);
     }
 
     /**
@@ -35,38 +39,50 @@ class ApiCredentialController extends Controller
      */
     public function store(Request $request)
     {
-        $validator = Validator::make($request->all(), [
-            'api_name' => 'required|string|in:medit_link,ds_core,3shape',
-            'client_id' => 'required|string|max:255',
+        \Log::info('Starting credential store process');
+
+        $validated = $request->validate([
+            'api_name' => 'required|string',
+            'client_id' => 'required|string',
             'client_secret' => 'required|string',
             'base_url' => 'nullable|url',
-            'additional_config' => 'nullable|json',
             'is_active' => 'boolean'
         ]);
 
-        if ($validator->fails()) {
-            return redirect()->back()
-                ->withErrors($validator)
-                ->withInput();
-        }
-
         try {
-            $data = $request->all();
-            $data['is_active'] = $request->has('is_active');
+            // Add default values
+            $validated['is_active'] = $validated['is_active'] ?? true;
+            $validated['base_url'] = $validated['base_url'] ?? 'https://dev-openapi-auth.meditlink.com';
+
+            // Store in session
+            session(['temp_credentials' => $validated]);
             
-            // Parse additional_config if it's a string
-            if (isset($data['additional_config']) && is_string($data['additional_config'])) {
-                $data['additional_config'] = json_decode($data['additional_config'], true);
+            \Log::info('Stored credentials in session', [
+                'api_name' => $validated['api_name'],
+                'has_client_id' => !empty($validated['client_id'])
+            ]);
+
+            // For AJAX requests
+            if ($request->expectsJson()) {
+                return response()->json([
+                    'success' => true,
+                    'redirect_url' => route('oauth.authorize')
+                ]);
             }
 
-            $credential = ApiCredential::create($data);
+            // For regular form submit
+            return redirect()->route('oauth.authorize');
 
-            return redirect()->route('api-credentials.index')
-                ->with('success', 'API credentials created successfully.');
         } catch (\Exception $e) {
-            return redirect()->back()
-                ->withErrors(['error' => 'Failed to save credentials: ' . $e->getMessage()])
-                ->withInput();
+            \Log::error('Failed to store credentials', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Error saving credentials: ' . $e->getMessage()
+            ], 422);
         }
     }
 
