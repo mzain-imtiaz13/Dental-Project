@@ -1,8 +1,8 @@
 <?php
+
 namespace App\Http\Controllers;
 
 use App\Models\ApiCredential;
-use App\Services\ApiService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Http;
@@ -12,124 +12,92 @@ class OrderController extends Controller
 {
     public function index(Request $request)
     {
-        // If requesting JSON, return API data
         if ($request->expectsJson()) {
             return $this->getOrdersData($request);
         }
-
-        // Otherwise return the view
         return view('orders');
     }
 
     private function getOrdersData(Request $request)
     {
         try {
-            $activeCredentials = ApiCredential::where('is_active', true)
-                ->whereNotNull('access_token')
-                ->get();
-
-            if ($activeCredentials->isEmpty()) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'No active API credentials found'
-                ], 404);
+            $creds = ApiCredential::where('is_active', true)->whereNotNull('access_token')->get();
+            if ($creds->isEmpty()) {
+                return response()->json(['success' => false, 'message' => 'No active API credentials found'], 404);
             }
 
-            $allOrders = [];
+            $orders = [];
             $apiStatuses = [];
 
-            foreach ($activeCredentials as $credential) {
+            foreach ($creds as $c) {
                 try {
-                    // Ensure valid token before making API call
-                    $credential = $this->ensureValidToken($credential);
-                    
-                    $apiService = new ApiService($credential);
-                    $result = $apiService->getOrders([
-                        'page' => $request->get('page', 1),
-                        'per_page' => $request->get('per_page', 10)
-                    ]);
-                    
-                    $allOrders = array_merge($allOrders, $result['data'] ?? []);
-                    $apiStatuses[$credential->api_name] = [
-                        'status' => 'success',
-                        'message' => 'Connected'
-                    ];
+                    $c = $this->ensureValidToken($c);
+
+                    $apiBase = $c->resourcesBase();
+                    $res = Http::withOptions(['verify' => false])
+                        ->withHeaders([
+                            'Authorization'         => 'Bearer '.$c->access_token,
+                            'Accept'                => 'application/json',
+                            'x-meditlink-client-id' => $c->client_id,
+                        ])->get($apiBase.'/v1/orders', [
+                            'page' => $request->get('page', 1),
+                            'size' => $request->get('per_page', 10),
+                        ]);
+
+                    if ($res->successful()) {
+                        $payload = $res->json();
+                        $orders = array_merge($orders, is_array($payload) ? $payload : ($payload['data'] ?? []));
+                        $apiStatuses[$c->api_name] = ['status' => 'success', 'message' => 'Connected'];
+                    } else {
+                        throw new \Exception($res->body());
+                    }
                 } catch (\Exception $e) {
-                    Log::error('API fetch failed', [
-                        'api' => $credential->api_name,
-                        'error' => $e->getMessage()
-                    ]);
-                    
-                    $apiStatuses[$credential->api_name] = [
-                        'status' => 'info',
-                        'message' => 'No data found'
-                    ];
+                    Log::error('API fetch failed', ['api' => $c->api_name, 'error' => $e->getMessage()]);
+                    $apiStatuses[$c->api_name] = ['status' => 'info', 'message' => 'No data found'];
                 }
             }
 
             return response()->json([
                 'success' => true,
                 'data' => [
-                    'orders' => $allOrders,
-                    'total_count' => count($allOrders),
-                    'api_statuses' => $apiStatuses
+                    'orders'      => $orders,
+                    'total_count' => count($orders),
+                    'api_statuses'=> $apiStatuses,
                 ]
             ]);
-
         } catch (\Exception $e) {
             Log::error('Orders fetch failed', ['error' => $e->getMessage()]);
-            return response()->json([
-                'success' => false,
-                'message' => 'Unable to fetch orders at this time'
-            ], 500);
+            return response()->json(['success' => false, 'message' => 'Unable to fetch orders at this time'], 500);
         }
     }
 
-    private function ensureValidToken(ApiCredential $credential)
+    private function ensureValidToken(ApiCredential $c): ApiCredential
     {
-        // Check if token is expired or will expire in next 5 minutes
-        if (!$credential->token_expiry || Carbon::parse($credential->token_expiry)->subMinutes(5)->isPast()) {
-            if (!$credential->refresh_token) {
+        if (!$c->token_expiry || Carbon::parse($c->token_expiry)->subMinutes(5)->isPast()) {
+            if (!$c->refresh_token) {
                 throw new \Exception('No refresh token available');
             }
 
-            try {
-                $response = Http::withOptions([
-                    'verify' => false
-                ])
-                ->asForm()
-                ->post($credential->base_url . '/oauth/token', [
-                    'grant_type' => 'refresh_token',
-                    'refresh_token' => decrypt($credential->refresh_token),
-                    'client_id' => $credential->client_id,
-                    'client_secret' => $credential->client_secret
+            $resp = Http::withOptions(['verify' => false])
+                ->withHeaders([
+                    'Authorization' => 'Basic '.base64_encode($c->client_id.':'.$c->client_secret),
+                ])->asForm()->post($c->authBase().'/oauth/token', [
+                    'grant_type'    => 'refresh_token',
+                    'refresh_token' => $c->refresh_token,
                 ]);
 
-                if (!$response->successful()) {
-                    throw new \Exception('Token refresh failed: ' . $response->body());
-                }
-
-                $tokenData = $response->json();
-
-                // Update credentials in database
-                $credential->update([
-                    'access_token' => encrypt($tokenData['access_token']),
-                    'refresh_token' => isset($tokenData['refresh_token']) ? encrypt($tokenData['refresh_token']) : $credential->refresh_token,
-                    'token_expiry' => now()->addSeconds($tokenData['expires_in'] ?? 3600)
-                ]);
-
-                Log::info('Token refreshed successfully', [
-                    'api' => $credential->api_name
-                ]);
-            } catch (\Exception $e) {
-                Log::error('Token refresh failed', [
-                    'api' => $credential->api_name,
-                    'error' => $e->getMessage()
-                ]);
-                throw $e;
+            if (!$resp->successful()) {
+                throw new \Exception('Token refresh failed: '.$resp->body());
             }
+
+            $tok = $resp->json();
+            $c->update([
+                'access_token'  => $tok['access_token'],
+                'refresh_token' => $tok['refresh_token'] ?? $c->refresh_token,
+                'token_expiry'  => now()->addSeconds($tok['expires_in'] ?? 3600),
+            ]);
         }
 
-        return $credential;
+        return $c;
     }
 }

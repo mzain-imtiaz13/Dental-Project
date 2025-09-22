@@ -11,7 +11,7 @@ class ApiService
     private const DEFAULT_PAGE_SIZE = 20;
 
     private $credential;
-    
+
     public function __construct(ApiCredential $credential)
     {
         $this->credential = $credential;
@@ -23,11 +23,15 @@ class ApiService
             return $this->getMeditLinkOrders($params);
         }
         // Add other API handlers here
+        return ['data' => [], 'meta' => ['current_page' => 1, 'total' => 0, 'per_page' => self::DEFAULT_PAGE_SIZE]];
     }
 
-    private function getMeditLinkOrders(array $params = []): array 
+    private function getMeditLinkOrders(array $params = []): array
     {
-        $baseUrl = rtrim($this->credential->base_url ?? 'https://stage-openapi.meditlink.com', '/');
+        // Convert stored auth host to resources host (what Postman uses)
+        $authBase = rtrim($this->credential->base_url ?? 'https://stage-openapi-auth.meditlink.com', '/');
+        $baseUrl  = str_replace('-auth', '-resources', $authBase);
+
         $endpoint = '/' . self::MEDIT_API_VERSION . '/orders/search';
 
         // Format query parameters according to Medit Link specs
@@ -60,7 +64,9 @@ class ApiService
             ->withHeaders([
                 'Authorization' => 'Bearer ' . $this->credential->access_token,
                 'Accept' => 'application/json',
-                'Content-Type' => 'application/json'
+                'Content-Type' => 'application/json',
+                // REQUIRED header (matches Postman)
+                'x-meditlink-client-id' => $this->credential->client_id,
             ])
             ->get($baseUrl . $endpoint, $queryParams);
 
@@ -88,7 +94,7 @@ class ApiService
                             'gender' => $order['patient']['gender'] ?? null
                         ],
                         'case_info' => $order['case_info'] ?? [],
-                        'source_api' => 'medit_link'
+                        'source_api' => 'Meditlink'
                     ];
                 }, $responseData['data'] ?? []),
                 'meta' => [

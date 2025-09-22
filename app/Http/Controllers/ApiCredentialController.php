@@ -5,123 +5,73 @@ namespace App\Http\Controllers;
 use App\Models\ApiCredential;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Validator;
+use Illuminate\Support\Facades\Http;
 
 class ApiCredentialController extends Controller
 {
-    /**
-     * Display a listing of the resource.
-     */
     public function index()
     {
         $credentials = ApiCredential::all();
-        \Log::info('Fetching API credentials', [
-            'count' => $credentials->count()
-        ]);
-        
-        return view('api-credentials.index', [
-            'credentials' => $credentials
-        ]);
+        return view('api-credentials.index', ['credentials' => $credentials]);
     }
 
-    /**
-     * Show the form for creating a new resource.
-     */
     public function create(Request $request)
     {
-        $apiName = $request->get('api', 'medit_link');
+        $apiName  = $request->get('api', 'medit_link');
         $apiNames = ApiCredential::getApiNames();
-        
         return view('api-credentials.create', compact('apiName', 'apiNames'));
     }
 
-    /**
-     * Store a newly created resource in storage.
-     */
     public function store(Request $request)
     {
-        \Log::info('Starting credential store process');
-
         $validated = $request->validate([
-            'api_name' => 'required|string',
-            'client_id' => 'required|string',
+            'api_name'      => 'required|string',
+            'client_id'     => 'required|string',
             'client_secret' => 'required|string',
-            'base_url' => 'nullable|url',
-            'is_active' => 'boolean'
+            'base_url'      => 'nullable|url', // AUTH base
+            'is_active'     => 'boolean',
         ]);
 
-        try {
-            // Add default values
-            $validated['is_active'] = $validated['is_active'] ?? true;
-            $validated['base_url'] = $validated['base_url'] ?? 'https://dev-openapi-auth.meditlink.com';
+        // default AUTH base (stage)
+        $validated['base_url'] = $validated['base_url'] ?: 'https://stage-openapi-auth.meditlink.com';
+        $validated['is_active'] = $validated['is_active'] ?? true;
 
-            // Store in session
-            session(['temp_credentials' => $validated]);
-            
-            \Log::info('Stored credentials in session', [
-                'api_name' => $validated['api_name'],
-                'has_client_id' => !empty($validated['client_id'])
-            ]);
+        session(['temp_credentials' => $validated]);
 
-            // For AJAX requests
-            if ($request->expectsJson()) {
-                return response()->json([
-                    'success' => true,
-                    'redirect_url' => route('oauth.authorize')
-                ]);
-            }
-
-            // For regular form submit
-            return redirect()->route('oauth.authorize');
-
-        } catch (\Exception $e) {
-            \Log::error('Failed to store credentials', [
-                'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString()
-            ]);
-
+        if ($request->expectsJson()) {
             return response()->json([
-                'success' => false,
-                'message' => 'Error saving credentials: ' . $e->getMessage()
-            ], 422);
+                'success'      => true,
+                'redirect_url' => route('oauth.authorize'),
+            ]);
         }
+
+        return redirect()->route('oauth.authorize');
     }
 
-    /**
-     * Display the specified resource.
-     */
     public function show(ApiCredential $apiCredential)
     {
         return view('api-credentials.show', compact('apiCredential'));
     }
 
-    /**
-     * Show the form for editing the specified resource.
-     */
     public function edit(ApiCredential $apiCredential)
     {
         $apiNames = ApiCredential::getApiNames();
-        
         return view('api-credentials.edit', compact('apiCredential', 'apiNames'));
     }
 
-    /**
-     * Update the specified resource in storage.
-     */
     public function update(Request $request, ApiCredential $apiCredential)
     {
         $validator = Validator::make($request->all(), [
-            'api_name' => 'required|string|in:medit_link,ds_core,3shape',
-            'client_id' => 'required|string|max:255',
-            'client_secret' => 'required|string',
-            'base_url' => 'nullable|url',
+            'api_name'          => 'required|string|in:medit_link,ds_core,3shape',
+            'client_id'         => 'required|string|max:255',
+            'client_secret'     => 'required|string',
+            'base_url'          => 'nullable|url', // AUTH base
             'additional_config' => 'nullable|json',
-            'is_active' => 'boolean'
+            'is_active'         => 'boolean',
         ]);
 
         if ($validator->fails()) {
-            return redirect()->back()
-                ->withErrors($validator)
-                ->withInput();
+            return redirect()->back()->withErrors($validator)->withInput();
         }
 
         $data = $request->all();
@@ -133,177 +83,106 @@ class ApiCredentialController extends Controller
             ->with('success', 'API credentials updated successfully.');
     }
 
-    /**
-     * Remove the specified resource from storage.
-     */
     public function destroy(ApiCredential $apiCredential)
     {
         $apiCredential->delete();
-
         return redirect()->route('api-credentials.index')
             ->with('success', 'API credentials deleted successfully.');
     }
 
-    /**
-     * Toggle active status
-     */
     public function toggle(ApiCredential $apiCredential)
     {
         $apiCredential->update(['is_active' => !$apiCredential->is_active]);
-        
         $status = $apiCredential->is_active ? 'activated' : 'deactivated';
-        
         return redirect()->route('api-credentials.index')
             ->with('success', "API credentials {$status} successfully.");
     }
 
-    /**
-     * Test API credentials connectivity
-     */
     public function test(ApiCredential $apiCredential)
     {
         try {
             $results = $this->performApiTest($apiCredential);
-            
-            if ($results['success']) {
-                return response()->json([
-                    'success' => true,
-                    'message' => 'API test completed successfully',
-                    'results' => $results
-                ]);
-            } else {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'API test failed',
-                    'results' => $results
-                ], 422);
-            }
+
+            return response()->json([
+                'success' => true,
+                'message' => 'API test completed successfully',
+                'results' => $results,
+            ]);
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'API test error: ' . $e->getMessage(),
-                'results' => []
+                'message' => 'API test error: '.$e->getMessage(),
+                'results' => [],
             ], 500);
         }
     }
 
-    /**
-     * Perform the actual API test
-     */
-    private function performApiTest($credential)
+    private function performApiTest(ApiCredential $credential): array
     {
         $results = [
             'credential_format' => $this->testCredentialFormat($credential),
-            'oauth_endpoint' => $this->testOAuthEndpoint($credential),
-            'api_connectivity' => null
+            'oauth_endpoint'    => $this->testOAuthEndpoint($credential),
+            'api_connectivity'  => $this->testApiConnectivity($credential),
+            'success'           => true,
         ];
 
-        // Test API connectivity if we have an access token
-        if ($credential->access_token) {
-            $results['api_connectivity'] = $this->testApiConnectivity($credential);
-        }
-
-        // Determine overall success
-        $results['success'] = $results['credential_format']['valid'] && 
-                             $results['oauth_endpoint']['accessible'];
-
+        $results['success'] = $results['credential_format']['valid'] && $results['oauth_endpoint']['accessible'];
         return $results;
     }
 
-    /**
-     * Test credential format
-     */
-    private function testCredentialFormat($credential)
+    private function testCredentialFormat(ApiCredential $c): array
     {
         $errors = [];
-        
-        if (empty($credential->client_id)) {
-            $errors[] = 'Client ID is empty';
-        } elseif (strlen($credential->client_id) < 10) {
-            $errors[] = 'Client ID seems too short';
-        }
+        if (empty($c->client_id)     || strlen($c->client_id) < 10)     $errors[] = 'Invalid Client ID';
+        if (empty($c->client_secret) || strlen($c->client_secret) < 10) $errors[] = 'Invalid Client Secret';
+        if ($c->base_url && !filter_var($c->base_url, FILTER_VALIDATE_URL)) $errors[] = 'Invalid Base URL';
+        return ['valid' => empty($errors), 'errors' => $errors];
+    }
 
-        if (empty($credential->client_secret)) {
-            $errors[] = 'Client Secret is empty';
-        } elseif (strlen($credential->client_secret) < 10) {
-            $errors[] = 'Client Secret seems too short';
-        }
+    private function testOAuthEndpoint(ApiCredential $c): array
+    {
+        $authBase = rtrim($c->base_url ?: config('meditlink.auth_base'), '/');
+        $tokenUrl = $authBase.'/oauth/token';
 
-        if ($credential->base_url && !filter_var($credential->base_url, FILTER_VALIDATE_URL)) {
-            $errors[] = 'Base URL format is invalid';
-        }
-
+        $response = Http::timeout(30)->withOptions(['verify' => false])->post($tokenUrl, []);
         return [
-            'valid' => empty($errors),
-            'errors' => $errors
+            'accessible' => in_array($response->status(), [200, 400, 401, 403]),
+            'status'     => $response->status(),
+            'response'   => $response->json() ?? ['status' => $response->status(), 'error' => $response->reason(), 'path' => '/oauth/token'],
+            'note'       => null,
         ];
     }
 
-    /**
-     * Test OAuth endpoint
-     */
-    private function testOAuthEndpoint($credential)
+    /** Convert AUTH base → RESOURCES base */
+    private function resourceBaseFromAuth(?string $authBase): string
     {
-        $baseUrl = $credential->base_url ?: 'https://openapi-auth.meditlink.com';
-        $tokenUrl = rtrim($baseUrl, '/') . '/oauth/token';
-        
-        try {
-            $response = \Illuminate\Support\Facades\Http::timeout(30)
-                ->withOptions([
-                    'verify' => false, // Disable SSL verification for development
-                ])
-                ->post($tokenUrl, [
-                    'grant_type' => 'client_credentials',
-                    'client_id' => $credential->client_id,
-                    'client_secret' => $credential->client_secret,
-                    'scope' => 'read'
-                ]);
-
-            return [
-                'accessible' => true,
-                'status' => $response->status(),
-                'response' => $response->json(),
-                'note' => $response->status() === 400 ? 'Expected - Medit Link uses Authorization Code flow' : null
-            ];
-        } catch (\Exception $e) {
-            return [
-                'accessible' => false,
-                'error' => $e->getMessage()
-            ];
-        }
+        $auth = rtrim($authBase ?: config('meditlink.auth_base'), '/');
+        return str_replace('-auth', '-resources', $auth);
     }
 
-    /**
-     * Test API connectivity
-     */
-    private function testApiConnectivity($credential)
+    private function testApiConnectivity(ApiCredential $c): array
     {
-        $apiBaseUrl = 'https://api.meditlink.com';
-        $userEndpoint = $apiBaseUrl . '/v1/user/me';
-        
+        $apiBase = $this->resourceBaseFromAuth($c->base_url);
+        $url     = $apiBase.'/v1/me';    // <— FIXED
+
         try {
-            $response = \Illuminate\Support\Facades\Http::timeout(30)
-                ->withOptions([
-                    'verify' => false, // Disable SSL verification for development
-                ])
+            $res = Http::timeout(30)
+                ->withOptions(['verify' => false])
                 ->withHeaders([
-                    'Authorization' => 'Bearer ' . $credential->access_token,
-                    'Accept' => 'application/json',
-                    'Content-Type' => 'application/json'
-                ])
-                ->get($userEndpoint);
+                    'Authorization'          => 'Bearer '.$c->access_token,
+                    'Accept'                 => 'application/json',
+                    'Content-Type'           => 'application/json',
+                    'x-meditlink-client-id'  => $c->client_id,
+                ])->get($url);
 
             return [
-                'successful' => $response->successful(),
-                'status' => $response->status(),
-                'response' => $response->json(),
-                'error' => $response->successful() ? null : $response->body()
+                'successful' => $res->successful(),
+                'status'     => $res->status(),
+                'response'   => $res->json() ?? $res->body(),
+                'error'      => $res->successful() ? null : ($res->json() ?? $res->body()),
             ];
         } catch (\Exception $e) {
-            return [
-                'successful' => false,
-                'error' => $e->getMessage()
-            ];
+            return ['successful' => false, 'status' => 0, 'response' => null, 'error' => $e->getMessage()];
         }
     }
 }
