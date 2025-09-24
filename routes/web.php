@@ -7,6 +7,7 @@ use App\Http\Controllers\ApiCredentialController;
 use App\Http\Controllers\OAuthController;
 use App\Models\User;
 use App\Http\Controllers\OrderController;
+use App\Http\Controllers\CaseController;
 
 /*
 |--------------------------------------------------------------------------
@@ -66,4 +67,9 @@ Route::middleware('auth')->group(function () {
     Route::get('/oauth/callback', [OAuthController::class, 'callback'])->name('oauth.callback');
     Route::post('/oauth/{apiCredential}/refresh', [OAuthController::class, 'refresh'])->name('oauth.refresh');
     Route::post('/oauth/{apiCredential}/fetch-data', [OAuthController::class, 'fetchData'])->name('oauth.fetch-data');
+
+    Route::get('/cases', [CaseController::class, 'index'])->name('cases.index');
+    Route::get('api-credentials/{apiCredential}/cases', [CaseController::class, 'byCredential'])
+    ->name('api-credentials.cases');
+
 });
