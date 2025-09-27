@@ -66,10 +66,13 @@ Route::middleware('auth')->group(function () {
     Route::get('/oauth/authorize', [OAuthController::class, 'authorize'])->name('oauth.authorize');
     Route::get('/oauth/callback', [OAuthController::class, 'callback'])->name('oauth.callback');
     Route::post('/oauth/{apiCredential}/refresh', [OAuthController::class, 'refresh'])->name('oauth.refresh');
-    Route::post('/oauth/{apiCredential}/fetch-data', [OAuthController::class, 'fetchData'])->name('oauth.fetch-data');
+    // Route::post('/oauth/{apiCredential}/fetch-data', [OAuthController::class, 'fetchData'])->name('oauth.fetch-data');
 
     Route::get('/cases', [CaseController::class, 'index'])->name('cases.index');
     Route::get('api-credentials/{apiCredential}/cases', [CaseController::class, 'byCredential'])
     ->name('api-credentials.cases');
+
+    Route::get('api-credentials/{apiCredential}/orders', [OrderController::class, 'byCredential'])
+    ->name('api-credentials.orders');
 
 });

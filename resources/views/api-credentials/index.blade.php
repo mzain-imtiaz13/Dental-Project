@@ -352,13 +352,11 @@ document.addEventListener('DOMContentLoaded', function() {
         const original = button.innerHTML;
         button.disabled = true; button.innerHTML = '<i class="bi bi-hourglass-split"></i>';
 
-        fetch(`/oauth/${credentialId}/fetch-data?type=orders`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').getAttribute('content')
-            }
-        })
+        fetch(`/api-credentials/${credentialId}/orders`, {   // ✅ new endpoint
+        headers: {
+            'Accept': 'application/json'
+        }
+    })
         .then(r => r.json())
         .then(d => showDataResults(d, credentialId, 'orders'))
         .catch(() => showDataResults({ success:false, message:'Network error occurred while fetching data' }, credentialId, 'orders'))

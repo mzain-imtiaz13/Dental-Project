@@ -3,10 +3,10 @@
 namespace App\Http\Controllers;
 
 use App\Models\ApiCredential;
-use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Facades\Http;
 use Carbon\Carbon;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Log;
 
 class OrderController extends Controller
 {
@@ -21,9 +21,15 @@ class OrderController extends Controller
     private function getOrdersData(Request $request)
     {
         try {
-            $creds = ApiCredential::where('is_active', true)->whereNotNull('access_token')->get();
+            $creds = ApiCredential::where('is_active', true)
+                ->whereNotNull('access_token')
+                ->get();
+
             if ($creds->isEmpty()) {
-                return response()->json(['success' => false, 'message' => 'No active API credentials found'], 404);
+                return response()->json([
+                    'success' => false,
+                    'message' => 'No active API credentials found'
+                ], 404);
             }
 
             $orders = [];
@@ -33,27 +39,49 @@ class OrderController extends Controller
                 try {
                     $c = $this->ensureValidToken($c);
 
-                    $apiBase = $c->resourcesBase();
+                    $apiBase   = $c->resourcesBase();
+                    $url       = $apiBase . '/v1/orders/search';
+                    $groupUuid = $this->resolveGroupUuid($c);
+
+                    $headers = [
+                        'Authorization'         => 'Bearer ' . $c->access_token,
+                        'Accept'                => 'application/json',
+                        'Content-Type'          => 'application/json',
+                        'x-meditlink-client-id' => $c->client_id,
+                    ];
+                    if ($groupUuid) {
+                        $headers['x-meditlink-group-uuid'] = $groupUuid;
+                    }
+
+                    $query = [
+                        'schema' => 'latest',
+                        'size'   => (int) $request->get('size', 20),
+                        'page'   => (int) $request->get('page', 0), // 0-based
+                        'start'  => 0,
+                        'end'    => 253402300799000,
+                    ];
+
                     $res = Http::withOptions(['verify' => false])
-                        ->withHeaders([
-                            'Authorization'         => 'Bearer '.$c->access_token,
-                            'Accept'                => 'application/json',
-                            'x-meditlink-client-id' => $c->client_id,
-                        ])->get($apiBase.'/v1/orders', [
-                            'page' => $request->get('page', 1),
-                            'size' => $request->get('per_page', 10),
-                        ]);
+                        ->withHeaders($headers)
+                        ->get($url, $query);
 
                     if ($res->successful()) {
-                        $payload = $res->json();
-                        $orders = array_merge($orders, is_array($payload) ? $payload : ($payload['data'] ?? []));
+                        $payload   = $res->json();
+                        $content   = $payload['content'] ?? [];
+                        $orders    = array_merge($orders, $content);
                         $apiStatuses[$c->api_name] = ['status' => 'success', 'message' => 'Connected'];
                     } else {
-                        throw new \Exception($res->body());
+                        $apiStatuses[$c->api_name] = [
+                            'status'  => 'error',
+                            'message' => 'HTTP '.$res->status().' '.$res->body(),
+                        ];
                     }
-                } catch (\Exception $e) {
-                    Log::error('API fetch failed', ['api' => $c->api_name, 'error' => $e->getMessage()]);
-                    $apiStatuses[$c->api_name] = ['status' => 'info', 'message' => 'No data found'];
+                } catch (\Throwable $e) {
+                    Log::error('Orders API fetch failed', [
+                        'api'   => $c->api_name,
+                        'error' => $e->getMessage(),
+                    ]);
+                    $apiStatuses[$c->api_name] = ['status' => 'error', 'message' => 'Exception: '.$e->getMessage()];
                 }
             }
 
@@ -65,9 +93,12 @@ class OrderController extends Controller
                     'api_statuses'=> $apiStatuses,
                 ]
             ]);
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
             Log::error('Orders fetch failed', ['error' => $e->getMessage()]);
-            return response()->json(['success' => false, 'message' => 'Unable to fetch orders at this time'], 500);
+            return response()->json([
+                'success' => false,
+                'message' => 'Unable to fetch orders'
+            ], 500);
         }
     }
 
@@ -80,14 +111,16 @@ class OrderController extends Controller
 
             $resp = Http::withOptions(['verify' => false])
                 ->withHeaders([
-                    'Authorization' => 'Basic '.base64_encode($c->client_id.':'.$c->client_secret),
-                ])->asForm()->post($c->authBase().'/oauth/token', [
+                    'Authorization' => 'Basic ' . base64_encode($c->client_id . ':' . $c->client_secret),
+                ])
+                ->asForm()
+                ->post($c->authBase() . '/oauth/token', [
                     'grant_type'    => 'refresh_token',
                     'refresh_token' => $c->refresh_token,
                 ]);
 
             if (!$resp->successful()) {
-                throw new \Exception('Token refresh failed: '.$resp->body());
+                throw new \Exception('Token refresh failed: ' . $resp->body());
             }
 
             $tok = $resp->json();
@@ -100,4 +133,115 @@ class OrderController extends Controller
 
         return $c;
     }
+
+    /** Same resolver as in Cases (copies safely) */
+    private function resolveGroupUuid(ApiCredential $c): ?string
+    {
+        $fromConfig = $c->additional_config['group_uuid'] ?? null;
+        if (!empty($fromConfig)) return $fromConfig;
+
+        $envUuid = env('MEDIT_GROUP_UUID');
+        if (!empty($envUuid)) {
+            $this->cacheGroupUuid($c, $envUuid);
+            return $envUuid;
+        }
+
+        try {
+            $res = Http::withOptions(['verify' => false])
+                ->withHeaders([
+                    'Authorization'         => 'Bearer ' . $c->access_token,
+                    'Accept'                => 'application/json',
+                    'Content-Type'          => 'application/json',
+                    'x-meditlink-client-id' => $c->client_id,
+                ])->get($c->resourcesBase().'/v1/groups');
+
+            if ($res->successful()) {
+                $data = $res->json();
+                $uuid = is_array($data) && isset($data[0]['uuid']) ? $data[0]['uuid'] : null;
+                if ($uuid) {
+                    $this->cacheGroupUuid($c, $uuid);
+                    return $uuid;
+                }
+            }
+        } catch (\Throwable $e) {
+            Log::warning('Failed to auto-resolve group uuid (orders)', ['error' => $e->getMessage()]);
+        }
+
+        return null;
+    }
+
+    private function cacheGroupUuid(ApiCredential $c, string $uuid): void
+    {
+        $cfg = $c->additional_config ?? [];
+        $cfg['group_uuid'] = $uuid;
+        $c->additional_config = $cfg;
+        $c->save();
+    }
+
+    public function byCredential(Request $request, ApiCredential $apiCredential)
+{
+    if ($request->expectsJson()) {
+        try {
+            $c = $this->ensureValidToken($apiCredential);
+
+            $apiBase   = $c->resourcesBase();
+            $url       = $apiBase . '/v1/orders/search';
+            $groupUuid = $c->additional_config['group_uuid'] ?? env('MEDIT_GROUP_UUID');
+
+            $headers = [
+                'Authorization'         => 'Bearer ' . $c->access_token,
+                'Accept'                => 'application/json',
+                'Content-Type'          => 'application/json',
+                'x-meditlink-client-id' => $c->client_id,
+            ];
+            if ($groupUuid) {
+                $headers['x-meditlink-group-uuid'] = $groupUuid;
+            }
+
+            $res = Http::withOptions(['verify' => false])
+                ->withHeaders($headers)
+                ->get($url, [
+                    'schema' => 'latest',
+                    'size'   => (int) $request->get('size', 20),
+                    'page'   => (int) $request->get('page', 0),
+                    'start'  => 0,
+                    'end'    => 253402300799000,
+                ]);
+
+            if (!$res->successful()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Failed: '.$res->status().' '.$res->body(),
+                ], 200);
+            }
+
+            $payload = $res->json();
+            $orders  = $payload['content'] ?? [];
+
+            return response()->json([
+                'success' => true,
+                'data' => [
+                    'orders'       => $orders,
+                    'total_count'  => count($orders),
+                    'api_statuses' => [
+                        $c->api_name ?? 'medit_link' => ['status' => 'success', 'message' => 'Connected'],
+                    ],
+                ],
+            ]);
+        } catch (\Throwable $e) {
+            \Log::error('Orders byCredential failed', [
+                'cred_id' => $apiCredential->id,
+                'error'   => $e->getMessage(),
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Unable to fetch orders: '.$e->getMessage(),
+            ], 200);
+        }
+    }
+
+    return view('orders_by_credential', ['credential' => $apiCredential]);
+}
+
 }
