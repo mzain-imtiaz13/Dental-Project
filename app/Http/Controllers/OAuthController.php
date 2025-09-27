@@ -10,26 +10,27 @@ use Illuminate\Support\Str;
 class OAuthController extends Controller
 {
     public function authorize(Request $request)
-    {
-        $temp = session('temp_credentials');
-        if (!$temp) {
-            return redirect()->route('api-credentials.index')->with('error', 'No credentials found.');
-        }
-
-        $cred = new ApiCredential($temp);
-        $state = Str::random(40);
-        session(['oauth_state' => $state]);
-
-        $authBase = rtrim($cred->base_url ?: 'https://stage-openapi-auth.meditlink.com', '/');
-        $params = http_build_query([
-            'client_id'     => $cred->client_id,
-            'response_type' => 'code',
-            'redirect_uri'  => route('oauth.callback'),
-            'scope'         => 'USER GROUP',
-            'state'         => $state,
-        ]);
-        return redirect($authBase.'/oauth/authorize?'.$params);
+{
+    $temp = session('temp_credentials');
+    if (!$temp) {
+        return redirect()->route('api-credentials.index')->with('error', 'No credentials found.');
     }
+
+    $cred = new ApiCredential($temp);
+    $state = \Illuminate\Support\Str::random(40);
+    session(['oauth_state' => $state]);
+
+    $authBase = rtrim($cred->base_url ?: config('meditlink.auth_base', 'https://stage-openapi-auth.meditlink.com'), '/');
+    $params = http_build_query([
+        'client_id'     => $cred->client_id,
+        'response_type' => 'code',
+        'redirect_uri'  => route('oauth.callback'),
+        'scope'         => config('meditlink.scope', 'USER GROUP ORDER CASE'),
+        'state'         => $state,
+    ]);
+    return redirect($authBase.'/oauth/authorize?'.$params);
+}
+
 
     public function callback(Request $request)
     {

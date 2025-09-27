@@ -1,4 +1,5 @@
 <?php
+
 namespace App\Services;
 
 use App\Models\ApiCredential;
@@ -7,108 +8,87 @@ use Illuminate\Support\Facades\Log;
 
 class ApiService
 {
-    private const MEDIT_API_VERSION = 'v1';
     private const DEFAULT_PAGE_SIZE = 20;
 
-    private $credential;
-
-    public function __construct(ApiCredential $credential)
-    {
-        $this->credential = $credential;
-    }
+    public function __construct(private ApiCredential $credential) {}
 
     public function getOrders(array $params = []): array
     {
         if ($this->credential->api_name === 'medit_link') {
             return $this->getMeditLinkOrders($params);
         }
-        // Add other API handlers here
-        return ['data' => [], 'meta' => ['current_page' => 1, 'total' => 0, 'per_page' => self::DEFAULT_PAGE_SIZE]];
+        return ['data' => [], 'meta' => ['page' => 0, 'size' => self::DEFAULT_PAGE_SIZE, 'total' => 0]];
     }
 
     private function getMeditLinkOrders(array $params = []): array
     {
-        // Convert stored auth host to resources host (what Postman uses)
-        $authBase = rtrim($this->credential->base_url ?? 'https://stage-openapi-auth.meditlink.com', '/');
-        $baseUrl  = str_replace('-auth', '-resources', $authBase);
+        $apiBase = $this->credential->resourcesBase();
+        $url     = $apiBase.'/v1/orders/search';
 
-        $endpoint = '/' . self::MEDIT_API_VERSION . '/orders/search';
-
-        // Format query parameters according to Medit Link specs
-        $queryParams = [
-            'page' => max(1, intval($params['page'] ?? 1)),
-            'per_page' => min(100, max(1, intval($params['per_page'] ?? self::DEFAULT_PAGE_SIZE))),
-            'sort' => $params['sort'] ?? '-created_at', // Default sort by newest first
+        $query = [
+            'schema' => 'latest',
+            'size'   => min(100, max(1, (int)($params['size'] ?? self::DEFAULT_PAGE_SIZE))),
+            'page'   => max(0, (int)($params['page'] ?? 0)), // 0-based
+            'start'  => 0,
+            'end'    => 253402300799000,
         ];
 
-        // Add optional filters if provided
-        if (!empty($params['created_from'])) {
-            $queryParams['created_from'] = date('Y-m-d', strtotime($params['created_from']));
-        }
-        if (!empty($params['created_to'])) {
-            $queryParams['created_to'] = date('Y-m-d', strtotime($params['created_to']));
-        }
-        if (!empty($params['status'])) {
-            $queryParams['status'] = $params['status'];
-        }
+        $headers = [
+            'Authorization'         => 'Bearer '.$this->credential->access_token,
+            'Accept'                => 'application/json',
+            'Content-Type'          => 'application/json',
+            'x-meditlink-client-id' => $this->credential->client_id,
+        ];
 
-        Log::info('Fetching Medit Link orders', [
-            'endpoint' => $endpoint,
-            'params' => $queryParams
-        ]);
+        // Optionally include group uuid if saved
+        $uuid = $this->credential->additional_config['group_uuid'] ?? env('MEDIT_GROUP_UUID');
+        if (!empty($uuid)) $headers['x-meditlink-group-uuid'] = $uuid;
 
         try {
-            $response = Http::withOptions([
-                'verify' => false // Only for development
-            ])
-            ->withHeaders([
-                'Authorization' => 'Bearer ' . $this->credential->access_token,
-                'Accept' => 'application/json',
-                'Content-Type' => 'application/json',
-                // REQUIRED header (matches Postman)
-                'x-meditlink-client-id' => $this->credential->client_id,
-            ])
-            ->get($baseUrl . $endpoint, $queryParams);
+            $res = Http::withOptions(['verify' => false])
+                ->withHeaders($headers)
+                ->get($url, $query);
 
-            if (!$response->successful()) {
-                Log::error('Medit Link API error', [
-                    'status' => $response->status(),
-                    'body' => $response->json() ?? $response->body()
-                ]);
-                throw new \Exception('Failed to fetch orders: ' . ($response->json()['message'] ?? $response->body()));
+            if (!$res->successful()) {
+                Log::error('Medit Link orders search failed', ['status' => $res->status(), 'body' => $res->body()]);
+                throw new \Exception('Failed to fetch orders: '.$res->body());
             }
 
-            $responseData = $response->json();
+            $json = $res->json();
+            $items = $json['content'] ?? [];
 
-            // Transform response to standardized format
             return [
-                'data' => array_map(function($order) {
+                'data' => array_map(function ($o) {
                     return [
-                        'id' => $order['id'],
-                        'created_at' => $order['created_at'],
-                        'updated_at' => $order['updated_at'],
-                        'status' => $order['status'],
-                        'patient' => [
-                            'name' => $order['patient']['name'] ?? null,
-                            'birth_date' => $order['patient']['birth_date'] ?? null,
-                            'gender' => $order['patient']['gender'] ?? null
+                        'id'         => $o['orderNumber'] ?? null,
+                        'created_at' => $o['dateCreated'] ?? null,
+                        'updated_at' => $o['dateUpdated'] ?? null,
+                        'status'     => $o['status'] ?? null,
+                        'patient'    => [
+                            'name'       => $o['case']['patient']['name'] ?? null,
+                            'code'       => $o['case']['patient']['code'] ?? null,
                         ],
-                        'case_info' => $order['case_info'] ?? [],
-                        'source_api' => 'Meditlink'
+                        'case'       => [
+                            'uuid'  => $o['case']['uuid'] ?? null,
+                            'name'  => $o['case']['name'] ?? null,
+                            'status'=> $o['case']['status'] ?? null,
+                        ],
+                        'buyer'      => $o['buyer']['name'] ?? null,
+                        'seller'     => $o['seller']['name'] ?? null,
+                        'source_api' => 'Meditlink',
                     ];
-                }, $responseData['data'] ?? []),
+                }, $items),
                 'meta' => [
-                    'current_page' => $responseData['meta']['current_page'] ?? 1,
-                    'total' => $responseData['meta']['total'] ?? 0,
-                    'per_page' => $responseData['meta']['per_page'] ?? self::DEFAULT_PAGE_SIZE
-                ]
+                    'page'     => $json['page'] ?? 0,
+                    'size'     => $json['size'] ?? (int)$query['size'],
+                    'total'    => $json['totalElements'] ?? count($items),
+                    'last'     => $json['last'] ?? true,
+                    'first'    => $json['first'] ?? true,
+                    'pages'    => $json['totalPage'] ?? 1,
+                ],
             ];
-
-        } catch (\Exception $e) {
-            Log::error('Failed to fetch Medit Link orders', [
-                'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString()
-            ]);
+        } catch (\Throwable $e) {
+            Log::error('Medit Link orders error', ['error' => $e->getMessage()]);
             throw $e;
         }
     }

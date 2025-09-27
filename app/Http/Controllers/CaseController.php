@@ -8,17 +8,17 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 
-class OrderController extends Controller
+class CaseController extends Controller
 {
     public function index(Request $request)
     {
         if ($request->expectsJson()) {
-            return $this->getOrdersData($request);
+            return $this->getCasesData($request);
         }
-        return view('orders');
+        return view('cases');
     }
 
-    private function getOrdersData(Request $request)
+    private function getCasesData(Request $request)
     {
         try {
             $creds = ApiCredential::where('is_active', true)
@@ -32,7 +32,7 @@ class OrderController extends Controller
                 ], 404);
             }
 
-            $orders = [];
+            $cases = [];
             $apiStatuses = [];
 
             foreach ($creds as $c) {
@@ -40,8 +40,8 @@ class OrderController extends Controller
                     $c = $this->ensureValidToken($c);
 
                     $apiBase   = $c->resourcesBase();
-                    $url       = $apiBase . '/v1/orders/search';
-                    $groupUuid = $this->resolveGroupUuid($c);
+                    $url       = $apiBase . '/v1/cases/search';
+                    $groupUuid = $this->resolveGroupUuid($c); // ← REQUIRED like your Postman
 
                     $headers = [
                         'Authorization'         => 'Bearer ' . $c->access_token,
@@ -53,22 +53,19 @@ class OrderController extends Controller
                         $headers['x-meditlink-group-uuid'] = $groupUuid;
                     }
 
-                    $query = [
-                        'schema' => 'latest',
-                        'size'   => (int) $request->get('size', 20),
-                        'page'   => (int) $request->get('page', 0), // 0-based
-                        'start'  => 0,
-                        'end'    => 253402300799000,
-                    ];
-
                     $res = Http::withOptions(['verify' => false])
                         ->withHeaders($headers)
-                        ->get($url, $query);
+                        ->get($url, [
+                            'schema' => 'latest',
+                            'size'   => (int) $request->get('size', 20),
+                            'page'   => (int) $request->get('page', 0), // 0-based (Postman uses 0)
+                            'start'  => 0,
+                            'end'    => 253402300799000,
+                        ]);
 
                     if ($res->successful()) {
-                        $payload   = $res->json();
-                        $content   = $payload['content'] ?? [];
-                        $orders    = array_merge($orders, $content);
+                        $payload = $res->json();
+                        $cases   = array_merge($cases, $payload['content'] ?? []);
                         $apiStatuses[$c->api_name] = ['status' => 'success', 'message' => 'Connected'];
                     } else {
                         $apiStatuses[$c->api_name] = [
@@ -77,7 +74,7 @@ class OrderController extends Controller
                         ];
                     }
                 } catch (\Throwable $e) {
-                    Log::error('Orders API fetch failed', [
+                    Log::error('Case API fetch failed', [
                         'api'   => $c->api_name,
                         'error' => $e->getMessage(),
                     ]);
@@ -88,16 +85,16 @@ class OrderController extends Controller
             return response()->json([
                 'success' => true,
                 'data' => [
-                    'orders'      => $orders,
-                    'total_count' => count($orders),
+                    'cases'       => $cases,
+                    'total_count' => count($cases),
                     'api_statuses'=> $apiStatuses,
                 ]
             ]);
         } catch (\Throwable $e) {
-            Log::error('Orders fetch failed', ['error' => $e->getMessage()]);
+            Log::error('Cases fetch failed', ['error' => $e->getMessage()]);
             return response()->json([
                 'success' => false,
-                'message' => 'Unable to fetch orders'
+                'message' => 'Unable to fetch cases'
             ], 500);
         }
     }
@@ -134,7 +131,13 @@ class OrderController extends Controller
         return $c;
     }
 
-    /** Same resolver as in Cases (copies safely) */
+    /**
+     * Get group UUID to mirror your Postman header.
+     * Priority:
+     *   1) $credential->additional_config['group_uuid']
+     *   2) env('MEDIT_GROUP_UUID')
+     *   3) GET /v1/groups (first group) — and cache it into additional_config
+     */
     private function resolveGroupUuid(ApiCredential $c): ?string
     {
         $fromConfig = $c->additional_config['group_uuid'] ?? null;
@@ -142,10 +145,12 @@ class OrderController extends Controller
 
         $envUuid = env('MEDIT_GROUP_UUID');
         if (!empty($envUuid)) {
+            // cache it for next time
             $this->cacheGroupUuid($c, $envUuid);
             return $envUuid;
         }
 
+        // Fallback: query groups once, cache
         try {
             $res = Http::withOptions(['verify' => false])
                 ->withHeaders([
@@ -164,7 +169,7 @@ class OrderController extends Controller
                 }
             }
         } catch (\Throwable $e) {
-            Log::warning('Failed to auto-resolve group uuid (orders)', ['error' => $e->getMessage()]);
+            Log::warning('Failed to auto-resolve group uuid', ['error' => $e->getMessage()]);
         }
 
         return null;
@@ -180,13 +185,14 @@ class OrderController extends Controller
 
     public function byCredential(Request $request, ApiCredential $apiCredential)
 {
+    // JSON request? return data
     if ($request->expectsJson()) {
         try {
             $c = $this->ensureValidToken($apiCredential);
 
             $apiBase   = $c->resourcesBase();
-            $url       = $apiBase . '/v1/orders/search';
-            $groupUuid = $c->additional_config['group_uuid'] ?? env('MEDIT_GROUP_UUID');
+            $url       = $apiBase . '/v1/cases/search';
+            $groupUuid = $this->resolveGroupUuid($c);
 
             $headers = [
                 'Authorization'         => 'Bearer ' . $c->access_token,
@@ -198,7 +204,7 @@ class OrderController extends Controller
                 $headers['x-meditlink-group-uuid'] = $groupUuid;
             }
 
-            $res = Http::withOptions(['verify' => false])
+            $res = \Illuminate\Support\Facades\Http::withOptions(['verify' => false])
                 ->withHeaders($headers)
                 ->get($url, [
                     'schema' => 'latest',
@@ -216,32 +222,33 @@ class OrderController extends Controller
             }
 
             $payload = $res->json();
-            $orders  = $payload['content'] ?? [];
+            $cases   = $payload['content'] ?? [];
 
             return response()->json([
                 'success' => true,
                 'data' => [
-                    'orders'       => $orders,
-                    'total_count'  => count($orders),
+                    'cases'        => $cases,
+                    'total_count'  => count($cases),
                     'api_statuses' => [
                         $c->api_name ?? 'medit_link' => ['status' => 'success', 'message' => 'Connected'],
                     ],
                 ],
             ]);
         } catch (\Throwable $e) {
-            \Log::error('Orders byCredential failed', [
+            \Illuminate\Support\Facades\Log::error('Cases byCredential failed', [
                 'cred_id' => $apiCredential->id,
                 'error'   => $e->getMessage(),
             ]);
 
             return response()->json([
                 'success' => false,
-                'message' => 'Unable to fetch orders: '.$e->getMessage(),
+                'message' => 'Unable to fetch cases: '.$e->getMessage(),
             ], 200);
         }
     }
 
-    return view('orders_by_credential', ['credential' => $apiCredential]);
+    // Otherwise show the page
+    return view('cases_by_credential', ['credential' => $apiCredential]);
 }
 
 }
