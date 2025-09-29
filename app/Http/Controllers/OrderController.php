@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\ApiCredential;
+use App\Services\MeditPersistenceService;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Http;
@@ -20,6 +21,8 @@ class OrderController extends Controller
 
     private function getOrdersData(Request $request)
     {
+        $persist = new MeditPersistenceService();
+
         try {
             $creds = ApiCredential::where('is_active', true)
                 ->whereNotNull('access_token')
@@ -40,6 +43,7 @@ class OrderController extends Controller
                     $c = $this->ensureValidToken($c);
 
                     $apiBase   = $c->resourcesBase();
+                    // Use /v1/orders/search for paging symmetry; /v1/orders also works
                     $url       = $apiBase . '/v1/orders/search';
                     $groupUuid = $this->resolveGroupUuid($c);
 
@@ -49,14 +53,14 @@ class OrderController extends Controller
                         'Content-Type'          => 'application/json',
                         'x-meditlink-client-id' => $c->client_id,
                     ];
-                    if ($groupUuid) {
+                    if (!empty($groupUuid)) {
                         $headers['x-meditlink-group-uuid'] = $groupUuid;
                     }
 
                     $query = [
                         'schema' => 'latest',
                         'size'   => (int) $request->get('size', 20),
-                        'page'   => (int) $request->get('page', 0), // 0-based
+                        'page'   => (int) $request->get('page', 0),
                         'start'  => 0,
                         'end'    => 253402300799000,
                     ];
@@ -66,10 +70,13 @@ class OrderController extends Controller
                         ->get($url, $query);
 
                     if ($res->successful()) {
-                        $payload   = $res->json();
-                        $content   = $payload['content'] ?? [];
-                        $orders    = array_merge($orders, $content);
+                        $payload = $res->json();
+                        $content = $payload['content'] ?? [];
+                        $orders  = array_merge($orders, $content);
                         $apiStatuses[$c->api_name] = ['status' => 'success', 'message' => 'Connected'];
+
+                        // ⬇️ Persist to DB
+                        $persist->upsertOrders($payload, $c);
                     } else {
                         $apiStatuses[$c->api_name] = [
                             'status'  => 'error',
@@ -77,7 +84,7 @@ class OrderController extends Controller
                         ];
                     }
                 } catch (\Throwable $e) {
-                    Log::error('Orders API fetch failed', [
+                    Log::error('Order API fetch failed', [
                         'api'   => $c->api_name,
                         'error' => $e->getMessage(),
                     ]);
@@ -111,16 +118,14 @@ class OrderController extends Controller
 
             $resp = Http::withOptions(['verify' => false])
                 ->withHeaders([
-                    'Authorization' => 'Basic ' . base64_encode($c->client_id . ':' . $c->client_secret),
-                ])
-                ->asForm()
-                ->post($c->authBase() . '/oauth/token', [
+                    'Authorization' => 'Basic '.base64_encode($c->client_id.':'.$c->client_secret),
+                ])->asForm()->post($c->authBase().'/oauth/token', [
                     'grant_type'    => 'refresh_token',
                     'refresh_token' => $c->refresh_token,
                 ]);
 
             if (!$resp->successful()) {
-                throw new \Exception('Token refresh failed: ' . $resp->body());
+                throw new \Exception('Token refresh failed: '.$resp->body());
             }
 
             $tok = $resp->json();
@@ -134,7 +139,6 @@ class OrderController extends Controller
         return $c;
     }
 
-    /** Same resolver as in Cases (copies safely) */
     private function resolveGroupUuid(ApiCredential $c): ?string
     {
         $fromConfig = $c->additional_config['group_uuid'] ?? null;
@@ -179,69 +183,71 @@ class OrderController extends Controller
     }
 
     public function byCredential(Request $request, ApiCredential $apiCredential)
-{
-    if ($request->expectsJson()) {
-        try {
-            $c = $this->ensureValidToken($apiCredential);
+    {
+        if ($request->expectsJson()) {
+            try {
+                $c = $this->ensureValidToken($apiCredential);
 
-            $apiBase   = $c->resourcesBase();
-            $url       = $apiBase . '/v1/orders/search';
-            $groupUuid = $c->additional_config['group_uuid'] ?? env('MEDIT_GROUP_UUID');
+                $apiBase   = $c->resourcesBase();
+                $url       = $apiBase . '/v1/orders/search';
+                $groupUuid = $c->additional_config['group_uuid'] ?? env('MEDIT_GROUP_UUID');
 
-            $headers = [
-                'Authorization'         => 'Bearer ' . $c->access_token,
-                'Accept'                => 'application/json',
-                'Content-Type'          => 'application/json',
-                'x-meditlink-client-id' => $c->client_id,
-            ];
-            if ($groupUuid) {
-                $headers['x-meditlink-group-uuid'] = $groupUuid;
-            }
+                $headers = [
+                    'Authorization'         => 'Bearer ' . $c->access_token,
+                    'Accept'                => 'application/json',
+                    'Content-Type'          => 'application/json',
+                    'x-meditlink-client-id' => $c->client_id,
+                ];
+                if ($groupUuid) {
+                    $headers['x-meditlink-group-uuid'] = $groupUuid;
+                }
 
-            $res = Http::withOptions(['verify' => false])
-                ->withHeaders($headers)
-                ->get($url, [
-                    'schema' => 'latest',
-                    'size'   => (int) $request->get('size', 20),
-                    'page'   => (int) $request->get('page', 0),
-                    'start'  => 0,
-                    'end'    => 253402300799000,
+                $res = Http::withOptions(['verify' => false])
+                    ->withHeaders($headers)
+                    ->get($url, [
+                        'schema' => 'latest',
+                        'size'   => (int) $request->get('size', 20),
+                        'page'   => (int) $request->get('page', 0),
+                        'start'  => 0,
+                        'end'    => 253402300799000,
+                    ]);
+
+                if (!$res->successful()) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Failed: '.$res->status().' '.$res->body(),
+                    ], 200);
+                }
+
+                $payload = $res->json();
+                $orders  = $payload['content'] ?? [];
+
+                // Persist
+                (new MeditPersistenceService())->upsertOrders($payload, $c);
+
+                return response()->json([
+                    'success' => true,
+                    'data' => [
+                        'orders'       => $orders,
+                        'total_count'  => count($orders),
+                        'api_statuses' => [
+                            $c->api_name ?? 'medit_link' => ['status' => 'success', 'message' => 'Connected'],
+                        ],
+                    ],
+                ]);
+            } catch (\Throwable $e) {
+                \Log::error('Orders byCredential failed', [
+                    'cred_id' => $apiCredential->id,
+                    'error'   => $e->getMessage(),
                 ]);
 
-            if (!$res->successful()) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Failed: '.$res->status().' '.$res->body(),
+                    'message' => 'Unable to fetch orders: '.$e->getMessage(),
                 ], 200);
             }
-
-            $payload = $res->json();
-            $orders  = $payload['content'] ?? [];
-
-            return response()->json([
-                'success' => true,
-                'data' => [
-                    'orders'       => $orders,
-                    'total_count'  => count($orders),
-                    'api_statuses' => [
-                        $c->api_name ?? 'medit_link' => ['status' => 'success', 'message' => 'Connected'],
-                    ],
-                ],
-            ]);
-        } catch (\Throwable $e) {
-            \Log::error('Orders byCredential failed', [
-                'cred_id' => $apiCredential->id,
-                'error'   => $e->getMessage(),
-            ]);
-
-            return response()->json([
-                'success' => false,
-                'message' => 'Unable to fetch orders: '.$e->getMessage(),
-            ], 200);
         }
+
+        return view('orders_by_credential', ['credential' => $apiCredential]);
     }
-
-    return view('orders_by_credential', ['credential' => $apiCredential]);
-}
-
 }
