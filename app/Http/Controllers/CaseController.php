@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\ApiCredential;
+use App\Services\MeditPersistenceService;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Http;
@@ -20,6 +21,8 @@ class CaseController extends Controller
 
     private function getCasesData(Request $request)
     {
+        $persist = new MeditPersistenceService();
+
         try {
             $creds = ApiCredential::where('is_active', true)
                 ->whereNotNull('access_token')
@@ -41,7 +44,7 @@ class CaseController extends Controller
 
                     $apiBase   = $c->resourcesBase();
                     $url       = $apiBase . '/v1/cases/search';
-                    $groupUuid = $this->resolveGroupUuid($c); // ← REQUIRED like your Postman
+                    $groupUuid = $this->resolveGroupUuid($c);
 
                     $headers = [
                         'Authorization'         => 'Bearer ' . $c->access_token,
@@ -58,7 +61,7 @@ class CaseController extends Controller
                         ->get($url, [
                             'schema' => 'latest',
                             'size'   => (int) $request->get('size', 20),
-                            'page'   => (int) $request->get('page', 0), // 0-based (Postman uses 0)
+                            'page'   => (int) $request->get('page', 0),
                             'start'  => 0,
                             'end'    => 253402300799000,
                         ]);
@@ -67,6 +70,9 @@ class CaseController extends Controller
                         $payload = $res->json();
                         $cases   = array_merge($cases, $payload['content'] ?? []);
                         $apiStatuses[$c->api_name] = ['status' => 'success', 'message' => 'Connected'];
+
+                        // ⬇️ Persist to DB
+                        $persist->upsertCases($payload, $c, $groupUuid);
                     } else {
                         $apiStatuses[$c->api_name] = [
                             'status'  => 'error',
@@ -106,7 +112,7 @@ class CaseController extends Controller
                 throw new \Exception('No refresh token available');
             }
 
-            $resp = Http::withOptions(['verify' => false])
+            $resp = \Illuminate\Support\Facades\Http::withOptions(['verify' => false])
                 ->withHeaders([
                     'Authorization' => 'Basic ' . base64_encode($c->client_id . ':' . $c->client_secret),
                 ])
@@ -131,13 +137,6 @@ class CaseController extends Controller
         return $c;
     }
 
-    /**
-     * Get group UUID to mirror your Postman header.
-     * Priority:
-     *   1) $credential->additional_config['group_uuid']
-     *   2) env('MEDIT_GROUP_UUID')
-     *   3) GET /v1/groups (first group) — and cache it into additional_config
-     */
     private function resolveGroupUuid(ApiCredential $c): ?string
     {
         $fromConfig = $c->additional_config['group_uuid'] ?? null;
@@ -145,14 +144,12 @@ class CaseController extends Controller
 
         $envUuid = env('MEDIT_GROUP_UUID');
         if (!empty($envUuid)) {
-            // cache it for next time
             $this->cacheGroupUuid($c, $envUuid);
             return $envUuid;
         }
 
-        // Fallback: query groups once, cache
         try {
-            $res = Http::withOptions(['verify' => false])
+            $res = \Illuminate\Support\Facades\Http::withOptions(['verify' => false])
                 ->withHeaders([
                     'Authorization'         => 'Bearer ' . $c->access_token,
                     'Accept'                => 'application/json',
@@ -169,7 +166,7 @@ class CaseController extends Controller
                 }
             }
         } catch (\Throwable $e) {
-            Log::warning('Failed to auto-resolve group uuid', ['error' => $e->getMessage()]);
+            \Illuminate\Support\Facades\Log::warning('Failed to auto-resolve group uuid', ['error' => $e->getMessage()]);
         }
 
         return null;
@@ -184,71 +181,71 @@ class CaseController extends Controller
     }
 
     public function byCredential(Request $request, ApiCredential $apiCredential)
-{
-    // JSON request? return data
-    if ($request->expectsJson()) {
-        try {
-            $c = $this->ensureValidToken($apiCredential);
+    {
+        if ($request->expectsJson()) {
+            try {
+                $c = $this->ensureValidToken($apiCredential);
 
-            $apiBase   = $c->resourcesBase();
-            $url       = $apiBase . '/v1/cases/search';
-            $groupUuid = $this->resolveGroupUuid($c);
+                $apiBase   = $c->resourcesBase();
+                $url       = $apiBase . '/v1/cases/search';
+                $groupUuid = $this->resolveGroupUuid($c);
 
-            $headers = [
-                'Authorization'         => 'Bearer ' . $c->access_token,
-                'Accept'                => 'application/json',
-                'Content-Type'          => 'application/json',
-                'x-meditlink-client-id' => $c->client_id,
-            ];
-            if ($groupUuid) {
-                $headers['x-meditlink-group-uuid'] = $groupUuid;
-            }
+                $headers = [
+                    'Authorization'         => 'Bearer ' . $c->access_token,
+                    'Accept'                => 'application/json',
+                    'Content-Type'          => 'application/json',
+                    'x-meditlink-client-id' => $c->client_id,
+                ];
+                if ($groupUuid) {
+                    $headers['x-meditlink-group-uuid'] = $groupUuid;
+                }
 
-            $res = \Illuminate\Support\Facades\Http::withOptions(['verify' => false])
-                ->withHeaders($headers)
-                ->get($url, [
-                    'schema' => 'latest',
-                    'size'   => (int) $request->get('size', 20),
-                    'page'   => (int) $request->get('page', 0),
-                    'start'  => 0,
-                    'end'    => 253402300799000,
+                $res = \Illuminate\Support\Facades\Http::withOptions(['verify' => false])
+                    ->withHeaders($headers)
+                    ->get($url, [
+                        'schema' => 'latest',
+                        'size'   => (int) $request->get('size', 20),
+                        'page'   => (int) $request->get('page', 0),
+                        'start'  => 0,
+                        'end'    => 253402300799000,
+                    ]);
+
+                if (!$res->successful()) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Failed: '.$res->status().' '.$res->body(),
+                    ], 200);
+                }
+
+                $payload = $res->json();
+                $cases   = $payload['content'] ?? [];
+
+                // Persist
+                (new MeditPersistenceService())->upsertCases($payload, $c, $groupUuid);
+
+                return response()->json([
+                    'success' => true,
+                    'data' => [
+                        'cases'        => $cases,
+                        'total_count'  => count($cases),
+                        'api_statuses' => [
+                            $c->api_name ?? 'medit_link' => ['status' => 'success', 'message' => 'Connected'],
+                        ],
+                    ],
+                ]);
+            } catch (\Throwable $e) {
+                \Illuminate\Support\Facades\Log::error('Cases byCredential failed', [
+                    'cred_id' => $apiCredential->id,
+                    'error'   => $e->getMessage(),
                 ]);
 
-            if (!$res->successful()) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Failed: '.$res->status().' '.$res->body(),
+                    'message' => 'Unable to fetch cases: '.$e->getMessage(),
                 ], 200);
             }
-
-            $payload = $res->json();
-            $cases   = $payload['content'] ?? [];
-
-            return response()->json([
-                'success' => true,
-                'data' => [
-                    'cases'        => $cases,
-                    'total_count'  => count($cases),
-                    'api_statuses' => [
-                        $c->api_name ?? 'medit_link' => ['status' => 'success', 'message' => 'Connected'],
-                    ],
-                ],
-            ]);
-        } catch (\Throwable $e) {
-            \Illuminate\Support\Facades\Log::error('Cases byCredential failed', [
-                'cred_id' => $apiCredential->id,
-                'error'   => $e->getMessage(),
-            ]);
-
-            return response()->json([
-                'success' => false,
-                'message' => 'Unable to fetch cases: '.$e->getMessage(),
-            ], 200);
         }
+
+        return view('cases_by_credential', ['credential' => $apiCredential]);
     }
-
-    // Otherwise show the page
-    return view('cases_by_credential', ['credential' => $apiCredential]);
-}
-
 }

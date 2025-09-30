@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\ApiCredential;
+use App\Services\MeditPersistenceService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Facades\Http;
@@ -32,8 +33,7 @@ class ApiCredentialController extends Controller
             'is_active'     => 'boolean',
         ]);
 
-        // default AUTH base (stage)
-        $validated['base_url'] = $validated['base_url'] ?: 'https://stage-openapi-auth.meditlink.com';
+        $validated['base_url']  = $validated['base_url'] ?: 'https://stage-openapi-auth.meditlink.com';
         $validated['is_active'] = $validated['is_active'] ?? true;
 
         session(['temp_credentials' => $validated]);
@@ -103,6 +103,14 @@ class ApiCredentialController extends Controller
         try {
             $results = $this->performApiTest($apiCredential);
 
+            // If /v1/me succeeded, persist connectivity
+            if (!empty($results['api_connectivity']['successful']) && $results['api_connectivity']['successful'] === true) {
+                (new MeditPersistenceService())->upsertConnectivity(
+                    $results['api_connectivity']['response'],
+                    $apiCredential
+                );
+            }
+
             return response()->json([
                 'success' => true,
                 'message' => 'API test completed successfully',
@@ -153,7 +161,6 @@ class ApiCredentialController extends Controller
         ];
     }
 
-    /** Convert AUTH base → RESOURCES base */
     private function resourceBaseFromAuth(?string $authBase): string
     {
         $auth = rtrim($authBase ?: config('meditlink.auth_base'), '/');
@@ -163,7 +170,7 @@ class ApiCredentialController extends Controller
     private function testApiConnectivity(ApiCredential $c): array
     {
         $apiBase = $this->resourceBaseFromAuth($c->base_url);
-        $url     = $apiBase.'/v1/me';    // <— FIXED
+        $url     = $apiBase.'/v1/me';
 
         try {
             $res = Http::timeout(30)
@@ -175,11 +182,13 @@ class ApiCredentialController extends Controller
                     'x-meditlink-client-id'  => $c->client_id,
                 ])->get($url);
 
+            $ok = $res->successful();
+
             return [
-                'successful' => $res->successful(),
+                'successful' => $ok,
                 'status'     => $res->status(),
                 'response'   => $res->json() ?? $res->body(),
-                'error'      => $res->successful() ? null : ($res->json() ?? $res->body()),
+                'error'      => $ok ? null : ($res->json() ?? $res->body()),
             ];
         } catch (\Exception $e) {
             return ['successful' => false, 'status' => 0, 'response' => null, 'error' => $e->getMessage()];
