@@ -5,7 +5,9 @@
         <h2 class="mb-4 d-flex justify-content-between align-items-center">
             Orders
             <div class="d-flex gap-2">
-                <button class="btn btn-success" id="downloadBtn">Download Orders</button>
+                <a class="btn btn-outline-secondary" href="{{ route('api-credentials.index') }}">
+                    <i class="bi bi-gear"></i> Sync / Manage APIs
+                </a>
             </div>
         </h2>
 
@@ -20,18 +22,15 @@
                         <label for="platform" class="form-label">Platform</label>
                         <select id="platform" class="form-select">
                             <option value="">All</option>
-                            <option value="3Shape">3Shape</option>
-                            <option value="DScore">DScore</option>
                             <option value="Meditlink">Meditlink</option>
+                            <option value="3Shape">3Shape</option>
+                            <option value="DS Core">DS Core</option>
                         </select>
                     </div>
                     <div class="col-6 col-md-3">
                         <label for="status" class="form-label">Status</label>
                         <select id="status" class="form-select">
                             <option value="">All</option>
-                            <option>Admitted</option>
-                            <option>Discharged</option>
-                            <option>Under Observation</option>
                         </select>
                     </div>
                     <div class="col-12 col-md-2 d-flex align-items-end">
@@ -46,12 +45,14 @@
                 <table class="table table-striped table-bordered mb-0 compact align-middle datatable-table" id="ordersTable">
                     <thead class="table-primary datatable-head">
                         <tr>
-                            <th>Order ID</th>
-                            <th>Patient Name</th>
+                            <th>Order #</th>
+                            <th>Patient</th>
                             <th>Platform</th>
                             <th>Order Date</th>
                             <th>Status</th>
-                            <th>Files</th>
+                            <th>Buyer</th>
+                            <th>Seller</th>
+                            <th style="width: 90px;">Action</th> {{-- NEW --}}
                         </tr>
                     </thead>
                     <tbody></tbody>
@@ -66,51 +67,69 @@
         </div>
     </div>
 
-    <script>
-        let rawData = []; // Will be populated from API
+    {{-- ORDER DETAILS MODAL --}}
+    <div class="modal fade" id="orderModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-lg modal-dialog-scrollable">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">
+                        <i class="bi bi-receipt-cutoff me-2"></i>
+                        Order Details
+                    </h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <div id="orderModalBody">
+                        <div class="text-muted">Loading…</div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                </div>
+            </div>
+        </div>
+    </div>
 
-        const state = { page: 1, pageSize: 5, search: '', platform: '', status: '' };
+    <script>
+        let rawData = [];
+        let rawById = new Map(); // for quick lookup when clicking View
+
+        const state = { page: 1, pageSize: 10, search: '', platform: '', status: '' };
 
         async function fetchOrders() {
             try {
-                const response = await fetch('{{ route("orders.index") }}', {
-                    headers: {
-                        'Accept': 'application/json',
-                        'X-Requested-With': 'XMLHttpRequest'
-                    }
+                const res = await fetch('{{ route("orders.index") }}', {
+                    headers: { 'Accept': 'application/json', 'X-Requested-With': 'XMLHttpRequest' }
                 });
-                const result = await response.json();
-                
-                if (result.success) {
-                    // Transform API data to match table structure
-                    rawData = result.data.orders.map(order => ({
-                        id: order.id,
-                        patient: order.patient?.name || 'N/A',
-                        platform: order.source_api,
-                        date: new Date(order.created_at).toLocaleDateString(),
-                        status: order.status,
-                        files: order.case_info?.files || []
-                    }));
-                    renderTable();
+                const result = await res.json();
+                if (!result.success) throw new Error(result.message || 'Unknown error');
 
-                    // Show API status
-                    const statusHtml = Object.entries(result.data.api_statuses)
-                        .map(([api, status]) => `
-                            <div class="alert alert-${status.status === 'error' ? 'danger' : 'success'} mb-2">
-                                <strong>${api}:</strong> ${status.message}
-                            </div>
-                        `).join('');
-                    document.querySelector('.container h2').insertAdjacentHTML('afterend', statusHtml);
-                } else {
-                    throw new Error(result.message);
-                }
-            } catch (error) {
-                console.error('Error:', error);
-                document.querySelector('.container h2').insertAdjacentHTML('afterend', `
-                    <div class="alert alert-danger">
-                        Failed to fetch orders: ${error.message}
-                    </div>
-                `);
+                rawData = result.data.orders.map(o => ({
+                    id: o.id,
+                    patient: o.patient?.name || '—',
+                    platform: o.source_api || 'Meditlink',
+                    date: o.created_at ? new Date(o.created_at).toLocaleDateString() : '—',
+                    status: o.status || '—',
+                    buyer: o.buyer || '—',
+                    seller: o.seller || '—',
+                    details: o.details || {}   // NEW: full details from DB
+                }));
+
+                rawById = new Map(rawData.map(r => [String(r.id), r]));
+
+                // Populate Status filter dynamically
+                const statuses = Array.from(new Set(rawData.map(r => r.status).filter(Boolean))).sort();
+                const statusSel = document.getElementById('status');
+                statusSel.innerHTML = `<option value="">All</option>` + statuses.map(s => `<option>${s}</option>`).join('');
+
+                renderTable();
+
+                document.querySelector('.container h2').insertAdjacentHTML('afterend',
+                    `<div class="alert alert-success mb-3">Loaded ${rawData.length} orders from database.</div>`);
+            } catch (e) {
+                console.error(e);
+                document.querySelector('.container h2').insertAdjacentHTML('afterend',
+                    `<div class="alert alert-danger">Failed to fetch orders: ${e.message}</div>`);
             }
         }
 
@@ -122,14 +141,10 @@
             let data = rawData.slice();
             if (state.search) {
                 const q = state.search.toLowerCase();
-                data = data.filter(r => `${r.id} ${r.patient} ${r.platform} ${r.status}`.toLowerCase().includes(q));
+                data = data.filter(r => `${r.id} ${r.patient} ${r.platform} ${r.status} ${r.buyer} ${r.seller}`.toLowerCase().includes(q));
             }
-            if (state.platform) {
-                data = data.filter(r => r.platform === state.platform);
-            }
-            if (state.status) {
-                data = data.filter(r => r.status === state.status);
-            }
+            if (state.platform) data = data.filter(r => r.platform === state.platform);
+            if (state.status)   data = data.filter(r => r.status === state.status);
             return data;
         }
 
@@ -143,14 +158,13 @@
                     <td>${r.patient}</td>
                     <td>${r.platform}</td>
                     <td>${r.date}</td>
-                    <td>${renderStatus(r.status)}</td>
+                    <td>${r.status}</td>
+                    <td>${r.buyer}</td>
+                    <td>${r.seller}</td>
                     <td>
-                        ${r.files.length ? 
-                            `<a href="#" class="btn btn-link" onclick="downloadFiles('${r.id}')">
-                                Download (${r.files.length})
-                            </a>` : 
-                            'No files'
-                        }
+                        <button class="btn btn-sm btn-primary view-order" data-id="${r.id}">
+                            <i class="bi bi-eye"></i> View
+                        </button>
                     </td>
                 </tr>
             `).join('');
@@ -170,6 +184,7 @@
             pagination.innerHTML = html;
         }
 
+        // Filters + pagination
         document.getElementById('search').addEventListener('input', (e) => { state.search = e.target.value; state.page = 1; renderTable(); });
         document.getElementById('platform').addEventListener('change', (e) => { state.platform = e.target.value; state.page = 1; renderTable(); });
         document.getElementById('status').addEventListener('change', (e) => { state.status = e.target.value; state.page = 1; renderTable(); });
@@ -191,25 +206,118 @@
             renderTable();
         });
 
-        function renderStatus(status) {
-            const key = status.toLowerCase().replaceAll(' ', '-');
-            const map = {
-                'admitted': 'status-admitted',
-                'discharged': 'status-discharged',
-                'under-observation': 'status-under-observation'
-            };
-            const cls = map[key] || 'status-admitted';
-            return `<span class="status-badge ${cls}">${status}</span>`;
+        // View button → open modal with full DB details
+        document.addEventListener('click', (e) => {
+            const btn = e.target.closest('.view-order');
+            if (!btn) return;
+            const id = btn.dataset.id;
+            const row = rawById.get(String(id));
+            if (!row) return;
+
+            openOrderModal(row);
+        });
+
+        function fmt(d) {
+            if (!d) return '—';
+            try { return new Date(d).toLocaleString(); } catch { return d; }
         }
 
-        function downloadFiles(orderId) {
-            // Implement file download logic here
-            console.log('Downloading files for order:', orderId);
+        function openOrderModal(row) {
+            const d = row.details || {};
+            const body = document.getElementById('orderModalBody');
+
+            // Make safe helpers
+            const buyer = d.buyer || {};
+            const seller = d.seller || {};
+            const kase  = d.case || {};
+            const cred  = d.credential || {};
+
+            body.innerHTML = `
+                <div class="mb-3">
+                    <h5 class="mb-1">Order #${row.id}</h5>
+                    <span class="badge bg-primary">${row.status || d.status || '—'}</span>
+                </div>
+
+                <div class="row g-3">
+                    <div class="col-md-6">
+                        <div class="card h-100">
+                            <div class="card-header">Timestamps</div>
+                            <div class="card-body">
+                                <dl class="row mb-0">
+                                    <dt class="col-5">Created</dt><dd class="col-7">${fmt(d.date_created || row.created_at)}</dd>
+                                    <dt class="col-5">Updated</dt><dd class="col-7">${fmt(d.date_updated || row.updated_at)}</dd>
+                                    <dt class="col-5">Desired Delivery</dt><dd class="col-7">${fmt(d.date_desired_delivery)}</dd>
+                                </dl>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="col-md-6">
+                        <div class="card h-100">
+                            <div class="card-header">Credential</div>
+                            <div class="card-body">
+                                <dl class="row mb-0">
+                                    <dt class="col-5">Source</dt><dd class="col-7">${row.platform}</dd>
+                                    <dt class="col-5">API</dt><dd class="col-7">${cred.api || '—'}</dd>
+                                    <dt class="col-5">Credential ID</dt><dd class="col-7">${cred.id ?? '—'}</dd>
+                                </dl>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="col-md-6">
+                        <div class="card h-100">
+                            <div class="card-header">Buyer Group</div>
+                            <div class="card-body">
+                                <dl class="row mb-0">
+                                    <dt class="col-5">UUID</dt><dd class="col-7">${buyer.uuid || '—'}</dd>
+                                    <dt class="col-5">Name</dt><dd class="col-7">${buyer.name || row.buyer || '—'}</dd>
+                                    <dt class="col-5">Type</dt><dd class="col-7">${buyer.type || '—'}</dd>
+                                </dl>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="col-md-6">
+                        <div class="card h-100">
+                            <div class="card-header">Seller Group</div>
+                            <div class="card-body">
+                                <dl class="row mb-0">
+                                    <dt class="col-5">UUID</dt><dd class="col-7">${seller.uuid || '—'}</dd>
+                                    <dt class="col-5">Name</dt><dd class="col-7">${seller.name || row.seller || '—'}</dd>
+                                    <dt class="col-5">Type</dt><dd class="col-7">${seller.type || '—'}</dd>
+                                </dl>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="col-12">
+                        <div class="card">
+                            <div class="card-header">Case</div>
+                            <div class="card-body">
+                                <dl class="row mb-0">
+                                    <dt class="col-3">UUID</dt><dd class="col-9">${kase.uuid || '—'}</dd>
+                                    <dt class="col-3">Name</dt><dd class="col-9">${kase.name || '—'}</dd>
+                                    <dt class="col-3">Status</dt><dd class="col-9">${kase.status || '—'}</dd>
+                                    <dt class="col-3">Patient</dt><dd class="col-9">${(kase.patient_name || row.patient || '—')} ${kase.patient_code ? '(' + kase.patient_code + ')' : ''}</dd>
+                                </dl>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="col-12">
+                        <details>
+                            <summary class="mb-2">Raw JSON</summary>
+                            <pre class="bg-light p-3 rounded border" style="max-height: 300px; overflow:auto;">${JSON.stringify(d.raw || {}, null, 2)}</pre>
+                        </details>
+                    </div>
+                </div>
+            `;
+
+            const modal = new bootstrap.Modal(document.getElementById('orderModal'));
+            modal.show();
         }
 
-        // Remove the dummy data and fetch real data when page loads
         document.addEventListener('DOMContentLoaded', fetchOrders);
     </script>
 @endsection
-
-
