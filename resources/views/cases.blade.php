@@ -36,7 +36,7 @@
 
     <div class="card datatable">
         <div class="table-responsive table-sticky">
-            <table class="table table-striped table-bordered mb-0 compact align-middle" id="casesTable">
+            <table class="table table-striped table-bordered mb-0 compact align-middle">
                 <thead class="table-primary datatable-head">
                     <tr>
                         <th>UUID</th>
@@ -59,7 +59,7 @@
     </div>
 </div>
 
-{{-- CASE DETAILS MODAL (NEW) --}}
+{{-- CASE DETAILS MODAL --}}
 <div class="modal fade" id="caseModal" tabindex="-1" aria-hidden="true">
     <div class="modal-dialog modal-lg modal-dialog-scrollable">
         <div class="modal-content">
@@ -84,7 +84,8 @@
 
 <script>
 let raw = [];
-let rawById = new Map(); // NEW: for quick lookup by UUID
+let byUuid = new Map(); // quick lookup for modal
+
 const state = { page: 1, pageSize: 10, search: '', status: '', gtype: '' };
 
 async function fetchCases() {
@@ -96,7 +97,7 @@ async function fetchCases() {
         return;
     }
 
-    // Keep a flat row for the table + a details blob for the modal
+    // Keep both flattened fields (for table) and the original case object (for modal).
     raw = json.data.cases.map(c => ({
         uuid: c.uuid,
         name: c.name || '—',
@@ -106,10 +107,10 @@ async function fetchCases() {
         gtype: c.group?.type || '',
         created: c.dateCreated ? new Date(c.dateCreated).toLocaleDateString() : '—',
         updated: c.dateUpdated ? new Date(c.dateUpdated).toLocaleDateString() : '—',
-        details: c.details || {} // NEW
+        _detail: c, // <-- original payload from controller for modal
     }));
 
-    rawById = new Map(raw.map(r => [String(r.uuid), r]));
+    byUuid = new Map(raw.map(r => [String(r.uuid), r]));
 
     // Fill Status filter
     const statuses = Array.from(new Set(raw.map(r => r.status).filter(Boolean))).sort();
@@ -147,7 +148,7 @@ function render() {
             <td>${r.created}</td>
             <td>${r.updated}</td>
             <td>
-                <button class="btn btn-sm btn-primary view-case" data-id="${r.uuid}">
+                <button class="btn btn-sm btn-primary view-case" data-uuid="${r.uuid}">
                     <i class="bi bi-eye"></i> View
                 </button>
             </td>
@@ -184,34 +185,34 @@ pagination.addEventListener('click', e => {
     render();
 });
 
-// NEW: handle View → open modal
+// Action column: open modal
 document.addEventListener('click', (e) => {
     const btn = e.target.closest('.view-case');
     if (!btn) return;
-    const id = btn.dataset.id;
-    const row = rawById.get(String(id));
+    const uuid = btn.getAttribute('data-uuid');
+    const row = byUuid.get(String(uuid));
     if (!row) return;
     openCaseModal(row);
 });
 
-function fmt(d) {
-    if (!d) return '—';
-    try { return new Date(d).toLocaleString(); } catch { return d; }
+function fmtDt(iso) {
+    if (!iso) return '—';
+    try { return new Date(iso).toLocaleString(); } catch { return iso; }
 }
 
 function openCaseModal(row) {
-    const d = row.details || {};
-    const body = document.getElementById('caseModalBody');
+    const d = row._detail || {};
 
-    const group = d.group || {};
-    const cred  = d.credential || {};
-    const patient = d.patient || {};
-    const tags = Array.isArray(d.tags) ? d.tags : (d.tags ? [String(d.tags)] : []);
+    const patientName = d?.patient?.name || row.patient || '—';
+    const patientCode = d?.patient?.code ? ` (${d.patient.code})` : '';
+    const group = d?.group || {};
+    const body = document.getElementById('caseModalBody');
 
     body.innerHTML = `
         <div class="mb-3">
-            <h5 class="mb-1">Case ${row.uuid}</h5>
-            <span class="badge bg-primary">${row.status || d.status || '—'}</span>
+            <h5 class="mb-1">Case: ${d.name || row.name || '—'}</h5>
+            <div class="small text-muted">UUID: <span class="text-break">${d.uuid || row.uuid}</span></div>
+            <span class="badge bg-primary mt-2">${d.status || row.status || '—'}</span>
         </div>
 
         <div class="row g-3">
@@ -220,35 +221,9 @@ function openCaseModal(row) {
                     <div class="card-header">Timestamps</div>
                     <div class="card-body">
                         <dl class="row mb-0">
-                            <dt class="col-5">Created</dt><dd class="col-7">${fmt(d.date_created || d.dateCreated)}</dd>
-                            <dt class="col-5">Updated</dt><dd class="col-7">${fmt(d.date_updated || d.dateUpdated)}</dd>
-                            <dt class="col-5">Scanned</dt><dd class="col-7">${fmt(d.date_scanned || d.dateScanned)}</dd>
-                        </dl>
-                    </div>
-                </div>
-            </div>
-
-            <div class="col-md-6">
-                <div class="card h-100">
-                    <div class="card-header">Credential</div>
-                    <div class="card-body">
-                        <dl class="row mb-0">
-                            <dt class="col-5">Source</dt><dd class="col-7">${d.source_api || 'Meditlink'}</dd>
-                            <dt class="col-5">API</dt><dd class="col-7">${cred.api || '—'}</dd>
-                            <dt class="col-5">Credential ID</dt><dd class="col-7">${cred.id ?? '—'}</dd>
-                        </dl>
-                    </div>
-                </div>
-            </div>
-
-            <div class="col-md-6">
-                <div class="card h-100">
-                    <div class="card-header">Group</div>
-                    <div class="card-body">
-                        <dl class="row mb-0">
-                            <dt class="col-5">UUID</dt><dd class="col-7">${group.uuid || '—'}</dd>
-                            <dt class="col-5">Name</dt><dd class="col-7">${group.name || row.group || '—'}</dd>
-                            <dt class="col-5">Type</dt><dd class="col-7">${group.type || '—'}</dd>
+                            <dt class="col-5">Created</dt><dd class="col-7">${fmtDt(d.dateCreated)}</dd>
+                            <dt class="col-5">Updated</dt><dd class="col-7">${fmtDt(d.dateUpdated)}</dd>
+                            <dt class="col-5">Scanned</dt><dd class="col-7">${fmtDt(d.dateScanned)}</dd>
                         </dl>
                     </div>
                 </div>
@@ -259,8 +234,8 @@ function openCaseModal(row) {
                     <div class="card-header">Patient</div>
                     <div class="card-body">
                         <dl class="row mb-0">
-                            <dt class="col-5">Name</dt><dd class="col-7">${patient.name || row.patient || '—'}</dd>
-                            <dt class="col-5">Code</dt><dd class="col-7">${patient.code || '—'}</dd>
+                            <dt class="col-5">Name</dt><dd class="col-7">${patientName}${patientCode}</dd>
+                            <dt class="col-5">Source</dt><dd class="col-7">${d.source_api || '—'}</dd>
                         </dl>
                     </div>
                 </div>
@@ -268,9 +243,13 @@ function openCaseModal(row) {
 
             <div class="col-12">
                 <div class="card h-100">
-                    <div class="card-header">Tags</div>
+                    <div class="card-header">Group</div>
                     <div class="card-body">
-                        ${tags.length ? tags.map(t => `<span class="badge bg-light text-dark border me-1 mb-1">${t}</span>`).join('') : '<span class="text-muted">—</span>'}
+                        <dl class="row mb-0">
+                            <dt class="col-3">UUID</dt><dd class="col-9">${group.uuid || '—'}</dd>
+                            <dt class="col-3">Name</dt><dd class="col-9">${group.name || '—'}</dd>
+                            <dt class="col-3">Type</dt><dd class="col-9">${group.type || '—'}</dd>
+                        </dl>
                     </div>
                 </div>
             </div>
@@ -278,7 +257,7 @@ function openCaseModal(row) {
             <div class="col-12">
                 <details>
                     <summary class="mb-2">Raw JSON</summary>
-                    <pre class="bg-light p-3 rounded border" style="max-height: 300px; overflow:auto;">${JSON.stringify(d.raw || {}, null, 2)}</pre>
+                    <pre class="bg-light p-3 rounded border" style="max-height: 300px; overflow:auto;">${JSON.stringify(d, null, 2)}</pre>
                 </details>
             </div>
         </div>

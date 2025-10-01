@@ -7,6 +7,8 @@ use App\Models\MeditCase;
 use App\Services\MeditPersistenceService;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Log;
 
 class CaseController extends Controller
 {
@@ -38,12 +40,7 @@ class CaseController extends Controller
         $cases = $query->get();
 
         $payload = $cases->map(function (MeditCase $c) {
-            $sourceApi = $c->credential?->api_name === ApiCredential::MEDIT_LINK
-                ? 'Meditlink'
-                : ($c->credential?->api_display_name ?? 'Unknown');
-
             return [
-                // table fields
                 'uuid'        => $c->uuid,
                 'name'        => $c->name,
                 'status'      => $c->status ?? '-',
@@ -56,29 +53,7 @@ class CaseController extends Controller
                     'name' => $c->group?->name,
                     'type' => $c->group?->type,
                 ],
-                'source_api'  => $sourceApi,
-
-                // modal details
-                'details' => [
-                    'status'        => $c->status,
-                    'date_created'  => optional($c->date_created)->toIso8601String(),
-                    'date_updated'  => optional($c->date_updated)->toIso8601String(),
-                    'date_scanned'  => optional($c->date_scanned)->toIso8601String(),
-                    'patient'       => ['name' => $c->patient_name, 'code' => $c->patient_code],
-                    'group'         => [
-                        'uuid' => $c->group_uuid,
-                        'name' => $c->group?->name,
-                        'type' => $c->group?->type,
-                    ],
-                    'credential'    => [
-                        'id'   => $c->credential?->id,
-                        'api'  => $c->credential?->api_name,
-                        'name' => $c->credential?->api_display_name,
-                    ],
-                    'source_api'    => $sourceApi,
-                    'tags'          => $c->tags,
-                    'raw'           => $c->raw,
-                ],
+                'source_api'  => $c->credential?->api_name === ApiCredential::MEDIT_LINK ? 'Meditlink' : ($c->credential?->api_display_name ?? 'Unknown'),
             ];
         })->values();
 
@@ -92,5 +67,151 @@ class CaseController extends Controller
         ]);
     }
 
-    /* ------- your existing “remote fetch + persist” endpoints + helpers remain unchanged ------- */
+    /* ------- your existing “remote fetch + persist” endpoints kept below ------- */
+
+    public function byCredential(Request $request, ApiCredential $apiCredential)
+    {
+        if ($request->expectsJson()) {
+            try {
+                $c = $this->ensureValidToken($apiCredential);
+
+                $apiBase   = $c->resourcesBase();
+                $url       = $apiBase . '/v1/cases/search';
+                $groupUuid = $this->resolveGroupUuid($c);
+
+                $headers = [
+                    'Authorization'         => 'Bearer ' . $c->access_token,
+                    'Accept'                => 'application/json',
+                    'Content-Type'          => 'application/json',
+                    'x-meditlink-client-id' => $c->client_id,
+                ];
+                if ($groupUuid) {
+                    $headers['x-meditlink-group-uuid'] = $groupUuid;
+                }
+
+                $res = \Illuminate\Support\Facades\Http::withOptions(['verify' => false])
+                    ->withHeaders($headers)
+                    ->get($url, [
+                        'schema' => 'latest',
+                        'size'   => (int) $request->get('size', 20),
+                        'page'   => (int) $request->get('page', 0),
+                        'start'  => 0,
+                        'end'    => 253402300799000,
+                    ]);
+
+                if (!$res->successful()) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Failed: '.$res->status().' '.$res->body(),
+                    ], 200);
+                }
+
+                $payload = $res->json();
+                $cases   = $payload['content'] ?? [];
+
+                // Persist
+                (new MeditPersistenceService())->upsertCases($payload, $c, $groupUuid);
+
+                return response()->json([
+                    'success' => true,
+                    'data' => [
+                        'cases'        => $cases,
+                        'total_count'  => count($cases),
+                        'api_statuses' => [
+                            $c->api_name ?? 'medit_link' => ['status' => 'success', 'message' => 'Connected'],
+                        ],
+                    ],
+                ]);
+            } catch (\Throwable $e) {
+                \Illuminate\Support\Facades\Log::error('Cases byCredential failed', [
+                    'cred_id' => $apiCredential->id,
+                    'error'   => $e->getMessage(),
+                ]);
+
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unable to fetch cases: '.$e->getMessage(),
+                ], 200);
+            }
+        }
+
+        return view('cases_by_credential', ['credential' => $apiCredential]);
+    }
+
+    /* ----- helpers copied (unchanged) ----- */
+
+    private function ensureValidToken(ApiCredential $c): ApiCredential
+    {
+        if (!$c->token_expiry || Carbon::parse($c->token_expiry)->subMinutes(5)->isPast()) {
+            if (!$c->refresh_token) {
+                throw new \Exception('No refresh token available');
+            }
+
+            $resp = \Illuminate\Support\Facades\Http::withOptions(['verify' => false])
+                ->withHeaders([
+                    'Authorization' => 'Basic ' . base64_encode($c->client_id . ':' . $c->client_secret),
+                ])
+                ->asForm()
+                ->post($c->authBase() . '/oauth/token', [
+                    'grant_type'    => 'refresh_token',
+                    'refresh_token' => $c->refresh_token,
+                ]);
+
+            if (!$resp->successful()) {
+                throw new \Exception('Token refresh failed: ' . $resp->body());
+            }
+
+            $tok = $resp->json();
+            $c->update([
+                'access_token'  => $tok['access_token'],
+                'refresh_token' => $tok['refresh_token'] ?? $c->refresh_token,
+                'token_expiry'  => now()->addSeconds($tok['expires_in'] ?? 3600),
+            ]);
+        }
+
+        return $c;
+    }
+
+    private function resolveGroupUuid(ApiCredential $c): ?string
+    {
+        $fromConfig = $c->additional_config['group_uuid'] ?? null;
+        if (!empty($fromConfig)) return $fromConfig;
+
+        $envUuid = env('MEDIT_GROUP_UUID');
+        if (!empty($envUuid)) {
+            $this->cacheGroupUuid($c, $envUuid);
+            return $envUuid;
+        }
+
+        try {
+            $res = \Illuminate\Support\Facades\Http::withOptions(['verify' => false])
+                ->withHeaders([
+                    'Authorization'         => 'Bearer ' . $c->access_token,
+                    'Accept'                => 'application/json',
+                    'Content-Type'          => 'application/json',
+                    'x-meditlink-client-id' => $c->client_id,
+                ])->get($c->resourcesBase().'/v1/groups');
+
+            if ($res->successful()) {
+                $data = $res->json();
+                $uuid = is_array($data) && isset($data[0]['uuid']) ? $data[0]['uuid'] : null;
+                if ($uuid) {
+                    $this->cacheGroupUuid($c, $uuid);
+                    return $uuid;
+                }
+            }
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::warning('Failed to auto-resolve group uuid', ['error' => $e->getMessage()]);
+        }
+
+        return null;
+    }
+
+    private function cacheGroupUuid(ApiCredential $c, string $uuid): void
+    {
+        $cfg = $c->additional_config ?? [];
+        $cfg['group_uuid'] = $uuid;
+        $c->additional_config = $cfg;
+        $c->save();
+    }
 }
