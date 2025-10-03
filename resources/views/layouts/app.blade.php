@@ -13,8 +13,6 @@
 </head>
 
 <body class="bg-light">
-
-
     <div class="container-fluid">
         <div class="row">
             {{-- Sidebar --}}
@@ -30,33 +28,61 @@
                             <h4 class="mb-0 fw-bold">Dental Lab</h4>
                         </div>
                     </div>
+
                     <ul class="list-group list-group-flush border-0">
                         <li class="list-group-item border-0 px-3 py-2">
                             <a href="{{ url('/dashboard') }}"
-                                class="text-decoration-none {{ Request::is('dashboard') ? 'active-link' : 'inactive-link' }}">
+                               class="text-decoration-none {{ Request::is('dashboard') ? 'active-link' : 'inactive-link' }}">
                                 <i class="bi bi-speedometer2 me-2"></i> Dashboard
                             </a>
                         </li>
+
                         <li class="list-group-item border-0 px-3 py-2">
                             <a href="{{ url('/orders') }}"
-                                class="text-decoration-none {{ Request::is('orders') ? 'active-link' : 'inactive-link' }}">
+                               class="text-decoration-none {{ Request::is('orders') ? 'active-link' : 'inactive-link' }}">
                                 <i class="bi bi-card-checklist me-2"></i> Orders
                             </a>
                         </li>
+
+                        {{-- NEW: Cases --}}
                         <li class="list-group-item border-0 px-3 py-2">
-                            <a href="{{ url('/users') }}"
-                                class="text-decoration-none {{ Request::is('users') ? 'active-link' : 'inactive-link' }}">
-                                <i class="bi bi-people me-2"></i> Users
+                            <a href="{{ url('/cases') }}"
+                               class="text-decoration-none {{ Request::is('cases') ? 'active-link' : 'inactive-link' }}">
+                                <i class="bi bi-folder2-open me-2"></i> Cases
                             </a>
                         </li>
+
+                        {{-- Styled Profiles --}}
+                        <li class="list-group-item border-0 px-3 py-2">
+                            <a href="{{ route('profiles.index') }}"
+                               class="text-decoration-none {{ Request::is('profiles') ? 'active-link' : 'inactive-link' }}">
+                                <i class="bi bi-person-badge me-2"></i> Profiles
+                            </a>
+                        </li>
+
+                        {{-- Styled Groups --}}
+                        <li class="list-group-item border-0 px-3 py-2">
+                            <a href="{{ route('groups.index') }}"
+                               class="text-decoration-none {{ Request::is('groups') ? 'active-link' : 'inactive-link' }}">
+                                <i class="bi bi-diagram-3 me-2"></i> Groups
+                            </a>
+                        </li>
+
                         <li class="list-group-item border-0 px-3 py-2">
                             <a href="{{ route('api-credentials.index') }}"
-                                class="text-decoration-none {{ Request::is('api-credentials*') ? 'active-link' : 'inactive-link' }}">
+                               class="text-decoration-none {{ Request::is('api-credentials*') ? 'active-link' : 'inactive-link' }}">
                                 <i class="bi bi-key me-2"></i> API Credentials
                             </a>
                         </li>
+                        
+                        <li class="list-group-item border-0 px-3 py-2">
+                            <a href="{{ url('/users') }}"
+                               class="text-decoration-none {{ Request::is('users') ? 'active-link' : 'inactive-link' }}">
+                                <i class="bi bi-people me-2"></i> Users
+                            </a>
+                        </li>
                     </ul>
-                    
+
                     {{-- User Info & Logout Section --}}
                     <div class="sidebar-logout">
                         <div class="mb-3">

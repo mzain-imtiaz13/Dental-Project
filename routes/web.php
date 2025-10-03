@@ -8,6 +8,8 @@ use App\Http\Controllers\OAuthController;
 use App\Models\User;
 use App\Http\Controllers\OrderController;
 use App\Http\Controllers\CaseController;
+use App\Http\Controllers\ProfileController;
+use App\Http\Controllers\GroupController;
 
 /*
 |--------------------------------------------------------------------------
@@ -15,29 +17,32 @@ use App\Http\Controllers\CaseController;
 |--------------------------------------------------------------------------
 */
 
-// Redirect root to login page
 Route::get('/', function () {
     return redirect()->route('login');
 });
 
-
-
-// Auth routes
+// Auth
 Route::get('/login', [LoginController::class, 'showLoginForm'])->name('login');
 Route::post('/login', [LoginController::class, 'login'])->name('login.submit');
 Route::post('/logout', [LoginController::class, 'logout'])->name('logout');
 
-// Protected routes (only for logged-in users)
 Route::middleware('auth')->group(function () {
 
-    Route::get('/dashboard', function () {
-        return view('dashboard'); 
-    })->name('dashboard');
+    Route::get('/dashboard', fn () => view('dashboard'))->name('dashboard');
 
-    Route::get('/orders/view', [OrderController::class, 'view'])->name('orders.view');
-    // Single route for orders
+    // Orders & Cases (DB-backed JSON)
     Route::get('/orders', [OrderController::class, 'index'])->name('orders.index');
-    
+    Route::get('/cases',  [CaseController::class,  'index'])->name('cases.index');
+
+    // Profiles & Groups views (DB-backed)
+    Route::get('/profiles', [ProfileController::class, 'index'])->name('profiles.index');
+    Route::get('/groups',   [GroupController::class,  'index'])->name('groups.index');
+
+    // Optional: per-credential remote pulls (kept)
+    Route::get('api-credentials/{apiCredential}/orders', [OrderController::class, 'byCredential'])->name('api-credentials.orders');
+    Route::get('api-credentials/{apiCredential}/cases',  [CaseController::class,  'byCredential'])->name('api-credentials.cases');
+
+    // Users (unchanged)
     Route::get('/users', function () {
         $users = User::select('name', 'email', 'role', 'created_at')->get()->map(function ($u) {
             return [
@@ -49,30 +54,16 @@ Route::middleware('auth')->group(function () {
         });
         return view('users', ['users' => $users]);
     })->name('users');
-
-    Route::get('/add-users', function () {
-        return view('addUsersForm');
-    })->name('add-users');
-
-    // 🚀 Store new user
+    Route::get('/add-users', fn () => view('addUsersForm'))->name('add-users');
     Route::post('/users', [UserController::class, 'store'])->name('users.store');
 
-    // API Credentials Management
+    // API Credentials
     Route::resource('api-credentials', ApiCredentialController::class);
     Route::patch('api-credentials/{apiCredential}/toggle', [ApiCredentialController::class, 'toggle'])->name('api-credentials.toggle');
     Route::post('api-credentials/{apiCredential}/test', [ApiCredentialController::class, 'test'])->name('api-credentials.test');
-    
-    // OAuth Routes
+
+    // OAuth
     Route::get('/oauth/authorize', [OAuthController::class, 'authorize'])->name('oauth.authorize');
     Route::get('/oauth/callback', [OAuthController::class, 'callback'])->name('oauth.callback');
     Route::post('/oauth/{apiCredential}/refresh', [OAuthController::class, 'refresh'])->name('oauth.refresh');
-    // Route::post('/oauth/{apiCredential}/fetch-data', [OAuthController::class, 'fetchData'])->name('oauth.fetch-data');
-
-    Route::get('/cases', [CaseController::class, 'index'])->name('cases.index');
-    Route::get('api-credentials/{apiCredential}/cases', [CaseController::class, 'byCredential'])
-    ->name('api-credentials.cases');
-
-    Route::get('api-credentials/{apiCredential}/orders', [OrderController::class, 'byCredential'])
-    ->name('api-credentials.orders');
-
 });
