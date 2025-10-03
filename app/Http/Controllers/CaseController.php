@@ -9,35 +9,37 @@ use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
+use Symfony\Component\HttpFoundation\StreamedResponse;
 
 class CaseController extends Controller
 {
     public function index(Request $request)
     {
+        // If user requested CSV export -> stream CSV
+        if ($request->query('export') === 'csv') {
+            return $this->exportCasesCsv($request);
+        }
+
+        // If request expects JSON (AJAX), return JSON cases (used by the front-end table)
         if ($request->expectsJson()) {
             return $this->getCasesFromDb($request);
         }
+
+        // Otherwise render HTML view
         return view('cases');
     }
 
     /**
-     * Return cases from DB (used by Cases tab).
+     * Return cases from DB (used by Cases tab via AJAX JSON).
      */
     private function getCasesFromDb(Request $request)
     {
-        $query = MeditCase::query()
-            ->with(['credential', 'group'])
+        $query = $this->buildBaseQuery($request);
+
+        $cases = $query->with(['credential', 'group'])
             ->orderByDesc('date_created')
-            ->orderByDesc('created_at');
-
-        if ($request->filled('status')) {
-            $query->where('status', $request->string('status'));
-        }
-        if ($request->filled('patient')) {
-            $query->where('patient_name', 'like', '%'.$request->string('patient').'%');
-        }
-
-        $cases = $query->get();
+            ->orderByDesc('created_at')
+            ->get();
 
         $payload = $cases->map(function (MeditCase $c) {
             return [
@@ -65,6 +67,100 @@ class CaseController extends Controller
                 'api_statuses'=> ['database' => ['status' => 'success', 'message' => 'Loaded from DB']],
             ],
         ]);
+    }
+
+    /**
+     * Stream a CSV file of cases, respecting basic filters (status, patient search, groupType).
+     * Called when ?export=csv is present.
+     */
+    private function exportCasesCsv(Request $request)
+    {
+        $query = $this->buildBaseQuery($request);
+
+        // apply ordering
+        $cases = $query->with(['credential', 'group'])
+            ->orderByDesc('date_created')
+            ->orderByDesc('created_at')
+            ->get();
+
+        $filename = 'cases_export_' . now()->format('Ymd_His') . '.csv';
+
+        $response = new StreamedResponse(function () use ($cases) {
+            $handle = fopen('php://output', 'w');
+            // CSV header
+            fputcsv($handle, [
+                'UUID',
+                'Name',
+                'Patient Name',
+                'Patient Code',
+                'Status',
+                'Group UUID',
+                'Group Name',
+                'Group Type',
+                'Date Created',
+                'Date Updated',
+                'Date Scanned',
+                'Source API',
+            ]);
+
+            foreach ($cases as $c) {
+                fputcsv($handle, [
+                    $c->uuid,
+                    $c->name,
+                    $c->patient_name,
+                    $c->patient_code,
+                    $c->status,
+                    $c->group_uuid,
+                    $c->group?->name,
+                    $c->group?->type,
+                    optional($c->date_created)->toDateTimeString(),
+                    optional($c->date_updated)->toDateTimeString(),
+                    optional($c->date_scanned)->toDateTimeString(),
+                    $c->credential?->api_name === ApiCredential::MEDIT_LINK ? 'Meditlink' : ($c->credential?->api_display_name ?? 'Unknown'),
+                ]);
+            }
+
+            fclose($handle);
+        });
+
+        $response->headers->set('Content-Type', 'text/csv; charset=UTF-8');
+        $response->headers->set('Content-Disposition', 'attachment; filename="' . $filename . '"');
+        // prevent buffering to ensure streaming
+        $response->headers->set('Cache-Control', 'no-store, no-cache');
+
+        return $response;
+    }
+
+    /**
+     * Build base query for cases with filters applied.
+     * Centralized so both JSON and CSV use the same filters.
+     */
+    private function buildBaseQuery(Request $request)
+    {
+        $query = MeditCase::query();
+
+        // allow relations when needed by caller
+        // Filters:
+        if ($request->filled('status')) {
+            $query->where('status', $request->string('status'));
+        }
+
+        // Note: original front-end uses a "search" field that searches across several columns client-side.
+        // The server supports a 'patient' query param in existing code; preserve that.
+        if ($request->filled('patient')) {
+            $query->where('patient_name', 'like', '%'.$request->string('patient').'%');
+        }
+
+        // For group type filter (front-end select 'groupType'), we map to group.type via relationship.
+        if ($request->filled('groupType')) {
+            $gtype = $request->string('groupType');
+            $query->whereHas('group', function ($q) use ($gtype) {
+                $q->where('type', $gtype);
+            });
+        }
+
+        // keep existing ordering (the caller may add their own)
+        return $query;
     }
 
     /* ------- your existing “remote fetch + persist” endpoints kept below ------- */

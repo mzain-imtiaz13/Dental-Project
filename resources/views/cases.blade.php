@@ -28,7 +28,14 @@
                     </select>
                 </div>
                 <div class="col-12 col-md-2 d-flex align-items-end">
-                    <button type="button" id="resetFilters" class="btn btn-outline-secondary w-100">Reset</button>
+                    <div class="w-100 d-flex gap-2">
+                        <button type="button" id="resetFilters" class="btn btn-outline-secondary w-100">Reset</button>
+                        <div class="btn-group">
+                            <button type="button" id="exportCsv" class="btn btn-outline-primary">
+                                <i class="bi bi-download"></i> Export CSV
+                            </button>
+                        </div>
+                    </div>
                 </div>
             </form>
         </div>
@@ -46,7 +53,7 @@
                         <th>Group</th>
                         <th>Created</th>
                         <th>Updated</th>
-                        <th style="width: 90px;">Action</th> {{-- NEW --}}
+                        <th style="width: 90px;">Action</th>
                     </tr>
                 </thead>
                 <tbody id="tbody"></tbody>
@@ -89,6 +96,10 @@ let byUuid = new Map(); // quick lookup for modal
 const state = { page: 1, pageSize: 10, search: '', status: '', gtype: '' };
 
 async function fetchCases() {
+    // GET JSON cases (existing flow)
+    const params = new URLSearchParams(window.location.search);
+    const url = '{{ route("cases.index") }}' + '?' + params.toString();
+
     const res = await fetch('{{ route("cases.index") }}', { headers: { 'Accept': 'application/json' }});
     const json = await res.json();
     if (!json.success) {
@@ -268,5 +279,24 @@ function openCaseModal(row) {
 }
 
 document.addEventListener('DOMContentLoaded', fetchCases);
+
+/**
+ * Export CSV (server-side). Builds URL with current filters and opens as a download.
+ * Server endpoint: /cases?export=csv
+ */
+document.getElementById('exportCsv').addEventListener('click', () => {
+    const searchVal = document.getElementById('search').value || '';
+    const statusVal = document.getElementById('status').value || '';
+    const groupTypeVal = document.getElementById('groupType').value || '';
+
+    const params = new URLSearchParams();
+    if (searchVal) params.set('patient', searchVal); // preserve server filter param if you use 'patient'
+    if (statusVal) params.set('status', statusVal);
+    if (groupTypeVal) params.set('groupType', groupTypeVal);
+    params.set('export', 'csv');
+
+    // open in new tab so download starts without losing the current page
+    window.open('{{ route("cases.index") }}' + '?' + params.toString(), '_blank');
+});
 </script>
 @endsection
