@@ -29,13 +29,14 @@ class ApiCredentialController extends Controller
             'api_name'      => 'required|string',
             'client_id'     => 'required|string',
             'client_secret' => 'required|string',
-            'base_url'      => 'nullable|url', // AUTH base
+            'base_url'      => 'nullable|url',
             'is_active'     => 'boolean',
         ]);
 
-        $validated['base_url']  = $validated['base_url'] ?: 'https://stage-openapi-auth.meditlink.com';
+        $validated['base_url']  = $validated['base_url'] ?: config('meditlink.auth_base');
         $validated['is_active'] = $validated['is_active'] ?? true;
 
+        // Save for OAuthController->authorize
         session(['temp_credentials' => $validated]);
 
         if ($request->expectsJson()) {
@@ -65,7 +66,7 @@ class ApiCredentialController extends Controller
             'api_name'          => 'required|string|in:medit_link,ds_core,3shape',
             'client_id'         => 'required|string|max:255',
             'client_secret'     => 'required|string',
-            'base_url'          => 'nullable|url', // AUTH base
+            'base_url'          => 'nullable|url',
             'additional_config' => 'nullable|json',
             'is_active'         => 'boolean',
         ]);
@@ -103,7 +104,6 @@ class ApiCredentialController extends Controller
         try {
             $results = $this->performApiTest($apiCredential);
 
-            // If /v1/me succeeded, persist connectivity
             if (!empty($results['api_connectivity']['successful']) && $results['api_connectivity']['successful'] === true) {
                 (new MeditPersistenceService())->upsertConnectivity(
                     $results['api_connectivity']['response'],
