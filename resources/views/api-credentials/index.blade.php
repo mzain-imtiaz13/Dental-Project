@@ -144,7 +144,7 @@
 
                                                     {{-- Medit-specific actions --}}
                                                     @if($credential->api_name === 'medit_link')
-                                                        @if($credential->access_token)
+                                                        @if($credential->access_token && !$credential->isTokenExpired())
                                                             {{-- Fetch data (example: orders) --}}
                                                             <button type="button"
                                                                     class="btn btn-info btn-sm rounded-2 fetch-data-btn"
@@ -153,16 +153,8 @@
                                                                     data-credential-id="{{ $credential->id }}">
                                                                 <i class="bi bi-download"></i>
                                                             </button>
-                                                            {{-- Refresh token --}}
-                                                            <button type="button"
-                                                                    class="btn btn-warning btn-sm rounded-2 refresh-token-btn"
-                                                                    title="Refresh Token"
-                                                                    data-bs-toggle="tooltip"
-                                                                    data-credential-id="{{ $credential->id }}">
-                                                                <i class="bi bi-arrow-clockwise"></i>
-                                                            </button>
                                                         @else
-                                                            {{-- Start OAuth --}}
+                                                            {{-- Start/Re-Authorize OAuth (no refresh flow) --}}
                                                             <a href="{{ route('oauth.authorize', ['api' => $credential->api_name]) }}"
                                                                class="btn btn-primary btn-sm rounded-2"
                                                                title="Authorize API"
@@ -251,14 +243,6 @@ document.addEventListener('DOMContentLoaded', function() {
         btn.addEventListener('click', function() {
             const id = this.getAttribute('data-credential-id');
             fetchApiData(id, this);
-        });
-    });
-
-    // Refresh token
-    document.querySelectorAll('.refresh-token-btn').forEach(function(btn) {
-        btn.addEventListener('click', function() {
-            const id = this.getAttribute('data-credential-id');
-            refreshToken(id, this);
         });
     });
 
@@ -352,31 +336,12 @@ document.addEventListener('DOMContentLoaded', function() {
         const original = button.innerHTML;
         button.disabled = true; button.innerHTML = '<i class="bi bi-hourglass-split"></i>';
 
-        fetch(`/api-credentials/${credentialId}/orders`, {   // ✅ new endpoint
-        headers: {
-            'Accept': 'application/json'
-        }
-    })
+        fetch(`/api-credentials/${credentialId}/orders`, {
+            headers: { 'Accept': 'application/json' }
+        })
         .then(r => r.json())
         .then(d => showDataResults(d, credentialId, 'orders'))
         .catch(() => showDataResults({ success:false, message:'Network error occurred while fetching data' }, credentialId, 'orders'))
-        .finally(() => { button.disabled = false; button.innerHTML = original; });
-    }
-
-    function refreshToken(credentialId, button) {
-        const original = button.innerHTML;
-        button.disabled = true; button.innerHTML = '<i class="bi bi-hourglass-split"></i>';
-
-        fetch(`/oauth/${credentialId}/refresh`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').getAttribute('content')
-            }
-        })
-        .then(r => r.json())
-        .then(d => { if (d.success) location.reload(); else alert('Token refresh failed: ' + d.message); })
-        .catch(() => alert('Network error occurred while refreshing token'))
         .finally(() => { button.disabled = false; button.innerHTML = original; });
     }
 

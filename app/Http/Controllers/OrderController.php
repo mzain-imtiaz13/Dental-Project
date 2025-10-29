@@ -5,7 +5,6 @@ namespace App\Http\Controllers;
 use App\Models\ApiCredential;
 use App\Models\MeditOrder;
 use App\Services\MeditPersistenceService;
-use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
@@ -14,21 +13,16 @@ class OrderController extends Controller
 {
     public function index(Request $request)
     {
-        // If the browser asks for JSON, return DB data for the table.
         if ($request->expectsJson()) {
             return $this->getOrdersFromDb($request);
         }
-        // Otherwise load the page (JS will call this route again with Accept: JSON)
         return view('orders');
     }
 
-    /**
-     * Return orders straight from DB (used by Orders tab).
-     */
     private function getOrdersFromDb(Request $request)
     {
         $query = MeditOrder::query()
-            ->with(['credential', 'case']) // eager load
+            ->with(['credential', 'case'])
             ->orderByDesc('date_created')
             ->orderByDesc('created_at');
 
@@ -50,7 +44,6 @@ class OrderController extends Controller
                 : ($o->credential?->api_display_name ?? 'Unknown');
 
             return [
-                // columns for the table
                 'id'         => (int)$o->order_number,
                 'created_at' => optional($o->date_created)->toIso8601String(),
                 'updated_at' => optional($o->date_updated)->toIso8601String(),
@@ -67,8 +60,6 @@ class OrderController extends Controller
                 'buyer'      => $o->buyer_name,
                 'seller'     => $o->seller_name,
                 'source_api' => $platform,
-
-                // everything else you may want to show in the modal
                 'details'    => [
                     'status'                => $o->status,
                     'date_created'          => optional($o->date_created)->toIso8601String(),
@@ -98,8 +89,6 @@ class OrderController extends Controller
                     ],
                     'raw' => $o->raw,
                 ],
-
-                // keep shape your earlier code expected
                 'case_info'  => ['files' => []],
             ];
         })->values();
@@ -114,13 +103,11 @@ class OrderController extends Controller
         ]);
     }
 
-    /* -------------------- existing remote sync endpoints kept as-is -------------------- */
-
     public function byCredential(Request $request, ApiCredential $apiCredential)
     {
         if ($request->expectsJson()) {
             try {
-                $c = $this->ensureValidToken($apiCredential);
+                $c = $apiCredential;
 
                 $apiBase   = $c->resourcesBase();
                 $url       = $apiBase . '/v1/orders/search';
@@ -146,6 +133,13 @@ class OrderController extends Controller
                         'end'    => 253402300799000,
                     ]);
 
+                if ($res->status() === 401) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Unauthorized/expired token. Please re-authorize.',
+                    ], 200);
+                }
+
                 if (!$res->successful()) {
                     return response()->json([
                         'success' => false,
@@ -153,25 +147,32 @@ class OrderController extends Controller
                     ], 200);
                 }
 
+                // robust JSON parse
                 $payload = $res->json();
+                if ($payload === null) {
+                    $payload = json_decode($res->body(), true);
+                }
+                if (!is_array($payload)) {
+                    Log::warning('Orders response not array/JSON', ['body' => $res->body()]);
+                    $payload = ['content' => []];
+                }
 
-                // Persist pulled orders
                 (new MeditPersistenceService())->upsertOrders($payload, $c);
 
-                $content = $payload['content'] ?? [];
+                $content = $payload['content'] ?? (is_array($payload) ? $payload : []);
 
                 return response()->json([
                     'success' => true,
                     'data' => [
                         'orders'       => $content,
-                        'total_count'  => count($content),
+                        'total_count'  => is_array($content) ? count($content) : 0,
                         'api_statuses' => [
                             $c->api_name ?? 'medit_link' => ['status' => 'success', 'message' => 'Connected'],
                         ],
                     ],
                 ]);
             } catch (\Throwable $e) {
-                \Log::error('Orders byCredential failed', [
+                Log::error('Orders byCredential failed', [
                     'cred_id' => $apiCredential->id,
                     'error'   => $e->getMessage(),
                 ]);
@@ -184,37 +185,5 @@ class OrderController extends Controller
         }
 
         return view('orders_by_credential', ['credential' => $apiCredential]);
-    }
-
-    /* ----- helpers copied from your file (unchanged) ----- */
-
-    private function ensureValidToken(ApiCredential $c): ApiCredential
-    {
-        if (!$c->token_expiry || Carbon::parse($c->token_expiry)->subMinutes(5)->isPast()) {
-            if (!$c->refresh_token) {
-                throw new \Exception('No refresh token available');
-            }
-
-            $resp = Http::withOptions(['verify' => false])
-                ->withHeaders([
-                    'Authorization' => 'Basic '.base64_encode($c->client_id.':'.$c->client_secret),
-                ])->asForm()->post($c->authBase().'/oauth/token', [
-                    'grant_type'    => 'refresh_token',
-                    'refresh_token' => $c->refresh_token,
-                ]);
-
-            if (!$resp->successful()) {
-                throw new \Exception('Token refresh failed: '.$resp->body());
-            }
-
-            $tok = $resp->json();
-            $c->update([
-                'access_token'  => $tok['access_token'],
-                'refresh_token' => $tok['refresh_token'] ?? $c->refresh_token,
-                'token_expiry'  => now()->addSeconds($tok['expires_in'] ?? 3600),
-            ]);
-        }
-
-        return $c;
     }
 }

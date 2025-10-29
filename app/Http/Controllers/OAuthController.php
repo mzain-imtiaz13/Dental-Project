@@ -16,21 +16,18 @@ class OAuthController extends Controller
             return redirect()->route('api-credentials.index')->with('error', 'No credentials found.');
         }
 
-        // these are what the user just typed on the “Add API Credentials” form
+        // values from “Add API Credentials” form
         $cred = new ApiCredential($temp);
 
-        // CSRF/state
         $state = Str::random(40);
         session(['oauth_state' => $state]);
 
-        // Build authorize URL from the AUTH base the user entered (or config)
+        // Build authorize URL from AUTH base
         $authBase = rtrim($cred->base_url ?: config('meditlink.auth_base'), '/');
-
-        // IMPORTANT: this will be https://dental.easytechinfo.net/oauth/callback on live
         $callback = route('oauth.callback');
 
-        // Scope from config (includes offline_access)
-        $scope = config('meditlink.scope', 'USER GROUP ORDER CASE offline_access');
+        // Scope without offline_access
+        $scope = trim(preg_replace('/\s+/', ' ', config('meditlink.scope', 'USER GROUP ORDER CASE')));
 
         $params = http_build_query([
             'client_id'     => $cred->client_id,
@@ -68,7 +65,7 @@ class OAuthController extends Controller
                 'Accept'        => 'application/json',
                 'Content-Type'  => 'application/x-www-form-urlencoded',
             ])
-            ->withOptions(['verify' => false]) // keep if stage certs are strict
+            ->withOptions(['verify' => false])
             ->asForm()
             ->post($tokenUrl, [
                 'grant_type'   => 'authorization_code',
@@ -77,7 +74,6 @@ class OAuthController extends Controller
             ]);
 
         if (!$resp->successful()) {
-            // helps you see the true reason if token exchange fails
             $body = $resp->body();
             $cred->delete();
             return redirect()->route('api-credentials.index')
@@ -87,6 +83,7 @@ class OAuthController extends Controller
         $tok = $resp->json();
         $cred->update([
             'access_token'  => $tok['access_token'] ?? null,
+            // ❌ no refresh token expected without offline_access
             'refresh_token' => $tok['refresh_token'] ?? null,
             'token_expiry'  => now()->addSeconds($tok['expires_in'] ?? 3600),
         ]);
@@ -96,35 +93,7 @@ class OAuthController extends Controller
         return redirect()->route('api-credentials.index')->with('success', 'API credentials saved successfully');
     }
 
-    public function refresh(Request $request, ApiCredential $cred)
-    {
-        if (!$cred->refresh_token) {
-            return response()->json(['success' => false, 'message' => 'No refresh token'], 400);
-        }
 
-        $resp = Http::withOptions(['verify' => false])
-            ->withHeaders(['Authorization' => 'Basic ' . base64_encode($cred->client_id . ':' . $cred->client_secret)])
-            ->asForm()
-            ->post($cred->authBase() . '/oauth/token', [
-                'grant_type'    => 'refresh_token',
-                'refresh_token' => $cred->refresh_token,
-            ]);
-
-        if (!$resp->successful()) {
-            return response()->json(['success' => false, 'message' => 'Token refresh failed: ' . $resp->body()], 400);
-        }
-
-        $tok = $resp->json();
-        $cred->update([
-            'access_token'  => $tok['access_token'] ?? null,
-            'refresh_token' => $tok['refresh_token'] ?? $cred->refresh_token,
-            'token_expiry'  => now()->addSeconds($tok['expires_in'] ?? 3600),
-        ]);
-
-        return response()->json(['success' => true, 'message' => 'Token refreshed']);
-    }
-
-    // optional helper you already had (unchanged)
     public function fetchData(Request $request, ApiCredential $cred)
     {
         if (!$cred->access_token) {
@@ -147,7 +116,7 @@ class OAuthController extends Controller
 
         $url = $apiBase . $endpoints[$type];
 
-        $res = Http::timeout(30)
+        $res = \Illuminate\Support\Facades\Http::timeout(30)
             ->withOptions(['verify' => false])
             ->withHeaders([
                 'Authorization'         => 'Bearer ' . $cred->access_token,
@@ -156,8 +125,17 @@ class OAuthController extends Controller
                 'x-meditlink-client-id' => $cred->client_id,
             ])->get($url);
 
+        if ($res->status() === 401) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Unauthorized/expired token. Please re-authorize.',
+            ], 200);
+        }
+
         if ($res->successful()) {
-            return response()->json(['success' => true, 'data' => $res->json(), 'type' => $type]);
+            $json = $res->json();
+            if ($json === null) $json = json_decode($res->body(), true);
+            return response()->json(['success' => true, 'data' => $json, 'type' => $type]);
         }
 
         return response()->json([
