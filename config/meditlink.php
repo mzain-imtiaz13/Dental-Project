@@ -7,9 +7,8 @@ return [
     'client_id'     => env('MEDIT_CLIENT_ID'),
     'client_secret' => env('MEDIT_CLIENT_SECRET'),
 
-    // Must match what you registered and what Postman uses
     'redirect_uri'  => env('MEDIT_REDIRECT_URI', 'http://127.0.0.1:8000/oauth/callback'),
 
-    // MUST include offline_access to receive refresh_token
-    'scope'         => env('MEDIT_SCOPE', 'USER GROUP ORDER CASE offline_access'),
+    // No offline_access here
+    'scope'         => env('MEDIT_SCOPE', 'USER GROUP ORDER CASE'),
 ];

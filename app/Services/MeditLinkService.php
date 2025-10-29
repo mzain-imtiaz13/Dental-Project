@@ -26,10 +26,9 @@ class MeditLinkService
         $this->clientId     = $this->clientId     ?: $cfg['client_id'];
         $this->clientSecret = $this->clientSecret ?: $cfg['client_secret'];
         $this->redirectUri  = $this->redirectUri  ?: $cfg['redirect_uri'];
-        $this->scope        = $this->scope        ?: $cfg['scope'];
+        $this->scope        = $this->scope        ?: $cfg['scope']; 
     }
 
-    /** Fetch or create the credential row. base_url = AUTH base */
     public function credentials(): ApiCredential
     {
         $cred = ApiCredential::firstOrCreate(
@@ -37,7 +36,7 @@ class MeditLinkService
             [
                 'client_id'         => $this->clientId,
                 'client_secret'     => $this->clientSecret,
-                'base_url'          => $this->authBase,  // store AUTH base
+                'base_url'          => $this->authBase,
                 'additional_config' => [],
             ]
         );
@@ -60,7 +59,7 @@ class MeditLinkService
             'response_type' => 'code',
             'client_id'     => $this->clientId,
             'redirect_uri'  => $this->redirectUri,
-            'scope'         => $this->scope,
+            'scope'         => $this->scope, 
             'state'         => $state,
         ]);
     }
@@ -90,38 +89,16 @@ class MeditLinkService
         return $cred;
     }
 
-    /** Ensure a valid token; refresh if needed. */
+    /** Without offline_access, we do NOT auto-refresh; just return current token or throw. */
     public function ensureAccessToken(): string
     {
         $cred = $this->credentials();
 
-        $expired = !$cred->token_expiry || now()->greaterThanOrEqualTo($cred->token_expiry->copy()->subMinute());
-        if ($cred->access_token && !$expired) {
+        if ($cred->access_token) {
             return $cred->access_token;
         }
 
-        if ($cred->refresh_token) {
-            $resp = Http::asForm()
-                ->baseUrl($cred->authBase())
-                ->acceptJson()
-                ->withBasicAuth($this->clientId, $this->clientSecret)
-                ->post('/oauth/token', [
-                    'grant_type'    => 'refresh_token',
-                    'refresh_token' => $cred->refresh_token,
-                ]);
-
-            $resp->throw();
-
-            $json = $resp->json();
-            $cred->access_token  = $json['access_token'] ?? null;
-            $cred->refresh_token = $json['refresh_token'] ?? $cred->refresh_token;
-            $cred->token_expiry  = Carbon::now()->addSeconds($json['expires_in'] ?? 3600);
-            $cred->save();
-
-            return $cred->access_token;
-        }
-
-        throw new RequestException(Http::response('Unauthorized: no token, please authorize', 401));
+        throw new RequestException(Http::response('Unauthorized: no access token, please authorize', 401));
     }
 
     /** Common HTTP client for RESOURCE server. */
@@ -130,7 +107,6 @@ class MeditLinkService
         $cred  = $this->credentials();
         $token = $this->ensureAccessToken();
 
-        // Derive resources host from auth host
         $apiBase = $cred->resourcesBase() ?: $this->apiBase;
 
         return Http::baseUrl($apiBase)
@@ -141,54 +117,27 @@ class MeditLinkService
             ->withToken($token);
     }
 
-    /** GET /v1/me  (correct path) */
     public function me(): array
     {
         $resp = $this->api()->get('/v1/me');
         if ($resp->status() === 401) {
-            $this->forceRefresh();
-            $resp = $this->api()->get('/v1/me');
+            throw new RequestException(Http::response('Unauthorized/expired token. Please re-authorize.', 401));
         }
         $resp->throw();
         return $resp->json();
     }
 
-    /** GET /v1/orders */
     public function orders(array $query = []): array
     {
         $resp = $this->api()->get('/v1/orders', $query);
         if ($resp->status() === 401) {
-            $this->forceRefresh();
-            $resp = $this->api()->get('/v1/orders', $query);
+            throw new RequestException(Http::response('Unauthorized/expired token. Please re-authorize.', 401));
         }
         $resp->throw();
         return $resp->json();
     }
 
-    private function forceRefresh(): void
-    {
-        $cred = $this->credentials();
-        if (!$cred->refresh_token) return;
-
-        $resp = Http::asForm()
-            ->baseUrl($cred->authBase())
-            ->acceptJson()
-            ->withBasicAuth($this->clientId, $this->clientSecret)
-            ->post('/oauth/token', [
-                'grant_type'    => 'refresh_token',
-                'refresh_token' => $cred->refresh_token,
-            ]);
-
-        if ($resp->successful()) {
-            $json = $resp->json();
-            $cred->access_token  = $json['access_token'] ?? null;
-            $cred->refresh_token = $json['refresh_token'] ?? $cred->refresh_token;
-            $cred->token_expiry  = Carbon::now()->addSeconds($json['expires_in'] ?? 3600);
-            $cred->save();
-        }
-    }
-
-    /** Diagnostic test: mirrors your modal JSON */
+    /** Diagnostic test */
     public function runConnectivityTest(): array
     {
         $result = [
@@ -204,7 +153,6 @@ class MeditLinkService
 
         $cred = $this->credentials();
 
-        // OAuth endpoint reachability (401 expected without proper form params)
         $oauthPing = Http::baseUrl($cred->authBase())->acceptJson()->post('/oauth/token', []);
         $result['results']['oauth_endpoint'] = [
             'accessible' => in_array($oauthPing->status(), [400, 401, 403, 200]),
@@ -213,7 +161,6 @@ class MeditLinkService
             'note'       => null,
         ];
 
-        // API connectivity using /v1/me
         try {
             $me = $this->me();
             $result['results']['api_connectivity'] = [

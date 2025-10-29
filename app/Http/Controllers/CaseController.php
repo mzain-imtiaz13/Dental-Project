@@ -5,7 +5,6 @@ namespace App\Http\Controllers;
 use App\Models\ApiCredential;
 use App\Models\MeditCase;
 use App\Services\MeditPersistenceService;
-use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
@@ -15,23 +14,15 @@ class CaseController extends Controller
 {
     public function index(Request $request)
     {
-        // If user requested CSV export -> stream CSV
         if ($request->query('export') === 'csv') {
             return $this->exportCasesCsv($request);
         }
-
-        // If request expects JSON (AJAX), return JSON cases (used by the front-end table)
         if ($request->expectsJson()) {
             return $this->getCasesFromDb($request);
         }
-
-        // Otherwise render HTML view
         return view('cases');
     }
 
-    /**
-     * Return cases from DB (used by Cases tab via AJAX JSON).
-     */
     private function getCasesFromDb(Request $request)
     {
         $query = $this->buildBaseQuery($request);
@@ -69,15 +60,10 @@ class CaseController extends Controller
         ]);
     }
 
-    /**
-     * Stream a CSV file of cases, respecting basic filters (status, patient search, groupType).
-     * Called when ?export=csv is present.
-     */
     private function exportCasesCsv(Request $request)
     {
         $query = $this->buildBaseQuery($request);
 
-        // apply ordering
         $cases = $query->with(['credential', 'group'])
             ->orderByDesc('date_created')
             ->orderByDesc('created_at')
@@ -87,20 +73,10 @@ class CaseController extends Controller
 
         $response = new StreamedResponse(function () use ($cases) {
             $handle = fopen('php://output', 'w');
-            // CSV header
             fputcsv($handle, [
-                'UUID',
-                'Name',
-                'Patient Name',
-                'Patient Code',
-                'Status',
-                'Group UUID',
-                'Group Name',
-                'Group Type',
-                'Date Created',
-                'Date Updated',
-                'Date Scanned',
-                'Source API',
+                'UUID','Name','Patient Name','Patient Code','Status',
+                'Group UUID','Group Name','Group Type',
+                'Date Created','Date Updated','Date Scanned','Source API',
             ]);
 
             foreach ($cases as $c) {
@@ -125,33 +101,21 @@ class CaseController extends Controller
 
         $response->headers->set('Content-Type', 'text/csv; charset=UTF-8');
         $response->headers->set('Content-Disposition', 'attachment; filename="' . $filename . '"');
-        // prevent buffering to ensure streaming
         $response->headers->set('Cache-Control', 'no-store, no-cache');
 
         return $response;
     }
 
-    /**
-     * Build base query for cases with filters applied.
-     * Centralized so both JSON and CSV use the same filters.
-     */
     private function buildBaseQuery(Request $request)
     {
         $query = MeditCase::query();
 
-        // allow relations when needed by caller
-        // Filters:
         if ($request->filled('status')) {
             $query->where('status', $request->string('status'));
         }
-
-        // Note: original front-end uses a "search" field that searches across several columns client-side.
-        // The server supports a 'patient' query param in existing code; preserve that.
         if ($request->filled('patient')) {
             $query->where('patient_name', 'like', '%'.$request->string('patient').'%');
         }
-
-        // For group type filter (front-end select 'groupType'), we map to group.type via relationship.
         if ($request->filled('groupType')) {
             $gtype = $request->string('groupType');
             $query->whereHas('group', function ($q) use ($gtype) {
@@ -159,17 +123,14 @@ class CaseController extends Controller
             });
         }
 
-        // keep existing ordering (the caller may add their own)
         return $query;
     }
-
-    /* ------- your existing “remote fetch + persist” endpoints kept below ------- */
 
     public function byCredential(Request $request, ApiCredential $apiCredential)
     {
         if ($request->expectsJson()) {
             try {
-                $c = $this->ensureValidToken($apiCredential);
+                $c = $apiCredential;
 
                 $apiBase   = $c->resourcesBase();
                 $url       = $apiBase . '/v1/cases/search';
@@ -185,7 +146,7 @@ class CaseController extends Controller
                     $headers['x-meditlink-group-uuid'] = $groupUuid;
                 }
 
-                $res = \Illuminate\Support\Facades\Http::withOptions(['verify' => false])
+                $res = Http::withOptions(['verify' => false])
                     ->withHeaders($headers)
                     ->get($url, [
                         'schema' => 'latest',
@@ -195,6 +156,13 @@ class CaseController extends Controller
                         'end'    => 253402300799000,
                     ]);
 
+                if ($res->status() === 401) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Unauthorized/expired token. Please re-authorize.',
+                    ], 200);
+                }
+
                 if (!$res->successful()) {
                     return response()->json([
                         'success' => false,
@@ -203,9 +171,9 @@ class CaseController extends Controller
                 }
 
                 $payload = $res->json();
+                if ($payload === null) $payload = json_decode($res->body(), true);
                 $cases   = $payload['content'] ?? [];
 
-                // Persist
                 (new MeditPersistenceService())->upsertCases($payload, $c, $groupUuid);
 
                 return response()->json([
@@ -219,7 +187,7 @@ class CaseController extends Controller
                     ],
                 ]);
             } catch (\Throwable $e) {
-                \Illuminate\Support\Facades\Log::error('Cases byCredential failed', [
+                Log::error('Cases byCredential failed', [
                     'cred_id' => $apiCredential->id,
                     'error'   => $e->getMessage(),
                 ]);
@@ -234,40 +202,6 @@ class CaseController extends Controller
         return view('cases_by_credential', ['credential' => $apiCredential]);
     }
 
-    /* ----- helpers copied (unchanged) ----- */
-
-    private function ensureValidToken(ApiCredential $c): ApiCredential
-    {
-        if (!$c->token_expiry || Carbon::parse($c->token_expiry)->subMinutes(5)->isPast()) {
-            if (!$c->refresh_token) {
-                throw new \Exception('No refresh token available');
-            }
-
-            $resp = \Illuminate\Support\Facades\Http::withOptions(['verify' => false])
-                ->withHeaders([
-                    'Authorization' => 'Basic ' . base64_encode($c->client_id . ':' . $c->client_secret),
-                ])
-                ->asForm()
-                ->post($c->authBase() . '/oauth/token', [
-                    'grant_type'    => 'refresh_token',
-                    'refresh_token' => $c->refresh_token,
-                ]);
-
-            if (!$resp->successful()) {
-                throw new \Exception('Token refresh failed: ' . $resp->body());
-            }
-
-            $tok = $resp->json();
-            $c->update([
-                'access_token'  => $tok['access_token'],
-                'refresh_token' => $tok['refresh_token'] ?? $c->refresh_token,
-                'token_expiry'  => now()->addSeconds($tok['expires_in'] ?? 3600),
-            ]);
-        }
-
-        return $c;
-    }
-
     private function resolveGroupUuid(ApiCredential $c): ?string
     {
         $fromConfig = $c->additional_config['group_uuid'] ?? null;
@@ -280,7 +214,7 @@ class CaseController extends Controller
         }
 
         try {
-            $res = \Illuminate\Support\Facades\Http::withOptions(['verify' => false])
+            $res = Http::withOptions(['verify' => false])
                 ->withHeaders([
                     'Authorization'         => 'Bearer ' . $c->access_token,
                     'Accept'                => 'application/json',
@@ -297,7 +231,7 @@ class CaseController extends Controller
                 }
             }
         } catch (\Throwable $e) {
-            \Illuminate\Support\Facades\Log::warning('Failed to auto-resolve group uuid', ['error' => $e->getMessage()]);
+            Log::warning('Failed to auto-resolve group uuid', ['error' => $e->getMessage()]);
         }
 
         return null;
