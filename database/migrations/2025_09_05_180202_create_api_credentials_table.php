@@ -15,7 +15,7 @@ return new class extends Migration
             $table->id();
             $table->string('api_name'); // medit_link, ds_core, 3shape
             $table->string('client_id');
-            $table->text('client_secret'); // encrypted
+            $table->text('client_secret')->nullable(); // encrypted
             $table->text('access_token')->nullable(); // encrypted
             $table->text('refresh_token')->nullable(); // encrypted
             $table->timestamp('token_expiry')->nullable();

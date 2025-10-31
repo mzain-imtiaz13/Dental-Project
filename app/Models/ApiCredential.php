@@ -15,7 +15,7 @@ class ApiCredential extends Model
         'access_token',
         'refresh_token',
         'token_expiry',
-        'base_url',             // <— store AUTH base here
+        'base_url',             // For Medit/DS: AUTH base. For 3Shape: Identity base.
         'is_active',
         'additional_config'
     ];
@@ -64,13 +64,12 @@ class ApiCredential extends Model
         return $this->token_expiry ? $this->token_expiry->isPast() : false;
     }
 
-    // Helper: auth base from DB or config
+    // Helpers
     public function authBase(): string
     {
         return rtrim($this->base_url ?: config('meditlink.auth_base'), '/');
     }
 
-    // Helper: resources base derived from auth base
     public function resourcesBase(): string
     {
         $auth = $this->authBase();
@@ -78,7 +77,11 @@ class ApiCredential extends Model
         return rtrim($res, '/');
     }
 
-    // Display name helpers (optional)
+    public function threeShapeResourceBase(): string
+    {
+        return rtrim($this->additional_config['resource_base'] ?? config('three_shape.resource_base'), '/');
+    }
+
     const MEDIT_LINK = 'medit_link';
     const DS_CORE    = 'ds_core';
     const THREESHAPE = '3shape';

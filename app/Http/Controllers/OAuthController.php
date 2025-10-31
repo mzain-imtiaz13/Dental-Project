@@ -6,9 +6,11 @@ use App\Models\ApiCredential;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Str;
+use Illuminate\Support\Facades\Log;
 
 class OAuthController extends Controller
 {
+    /* ----------- Medit: kick off ----------- */
     public function authorize(Request $request)
     {
         $temp = session('temp_credentials');
@@ -16,17 +18,13 @@ class OAuthController extends Controller
             return redirect()->route('api-credentials.index')->with('error', 'No credentials found.');
         }
 
-        // values from “Add API Credentials” form
-        $cred = new ApiCredential($temp);
-
+        $cred  = new ApiCredential($temp);
         $state = Str::random(40);
         session(['oauth_state' => $state]);
 
-        // Build authorize URL from AUTH base
         $authBase = rtrim($cred->base_url ?: config('meditlink.auth_base'), '/');
         $callback = route('oauth.callback');
 
-        // Scope without offline_access
         $scope = trim(preg_replace('/\s+/', ' ', config('meditlink.scope', 'USER GROUP ORDER CASE')));
 
         $params = http_build_query([
@@ -40,7 +38,20 @@ class OAuthController extends Controller
         return redirect($authBase . '/oauth/authorize?' . $params);
     }
 
-    public function callback(Request $request)
+    /* ===== unified callback entry point ===== */
+    public function sharedCallback(Request $request)
+    {
+        $iss = (string) $request->query('iss', '');
+
+        if (str_contains($iss, '3shape.com') || session()->has('3s.state')) {
+            return $this->callback3Shape($request);
+        }
+
+        return $this->callbackMedit($request);
+    }
+
+    /* ------------- Medit callback ------------- */
+    private function callbackMedit(Request $request)
     {
         $code  = $request->get('code');
         $state = $request->get('state');
@@ -50,13 +61,11 @@ class OAuthController extends Controller
             return redirect()->route('api-credentials.index')->with('error', 'Invalid callback data');
         }
 
-        // Create the credential row with the values you entered
         $cred = ApiCredential::create($temp);
 
         $authBase = rtrim($cred->base_url ?: config('meditlink.auth_base'), '/');
         $tokenUrl = $authBase . '/oauth/token';
 
-        // Basic auth with client_id:client_secret
         $basic = base64_encode($cred->client_id . ':' . $cred->client_secret);
 
         $resp = Http::timeout(30)
@@ -83,7 +92,6 @@ class OAuthController extends Controller
         $tok = $resp->json();
         $cred->update([
             'access_token'  => $tok['access_token'] ?? null,
-            // ❌ no refresh token expected without offline_access
             'refresh_token' => $tok['refresh_token'] ?? null,
             'token_expiry'  => now()->addSeconds($tok['expires_in'] ?? 3600),
         ]);
@@ -93,54 +101,77 @@ class OAuthController extends Controller
         return redirect()->route('api-credentials.index')->with('success', 'API credentials saved successfully');
     }
 
-
-    public function fetchData(Request $request, ApiCredential $cred)
+    /* ------------- 3Shape callback ------------- */
+    private function callback3Shape(Request $request)
     {
-        if (!$cred->access_token) {
-            return response()->json(['success' => false, 'message' => 'No access token. Authorize first.'], 400);
+        if ($request->query('error')) {
+            return redirect()->route('api-credentials.index')
+                ->with('error', '3Shape authorization failed: '.$request->query('error'));
         }
 
-        $type    = $request->get('type', 'orders');
-        $apiBase = $cred->resourcesBase();
-
-        $endpoints = [
-            'orders'   => '/v1/orders',
-            'patients' => '/v1/patients',
-            'user'     => '/v1/me',
-            'groups'   => '/v1/groups',
-        ];
-
-        if (!isset($endpoints[$type])) {
-            return response()->json(['success' => false, 'message' => 'Invalid type'], 400);
+        $state = $request->query('state');
+        if (!$state || $state !== session('3s.state')) {
+            return redirect()->route('api-credentials.index')
+                ->with('error', 'Invalid OAuth state for 3Shape.');
         }
 
-        $url = $apiBase . $endpoints[$type];
+        $code = $request->query('code');
+        if (!$code) {
+            return redirect()->route('api-credentials.index')
+                ->with('error', 'Missing authorization code from 3Shape.');
+        }
 
-        $res = \Illuminate\Support\Facades\Http::timeout(30)
+        $codeVerifier = session('3s.code_verifier');
+        $identityBase = session('3s.identity_base') ?: config('three_shape.identity_base');
+        $clientId     = session('3s.client_id')     ?: config('three_shape.client_id');
+        $redirectUri  = rtrim(config('three_shape.redirect_uri'), '/');
+
+        $tokenUrl = rtrim($identityBase, '/').'/connect/token';
+
+        $resp = Http::asForm()
             ->withOptions(['verify' => false])
-            ->withHeaders([
-                'Authorization'         => 'Bearer ' . $cred->access_token,
-                'Accept'                => 'application/json',
-                'Content-Type'          => 'application/json',
-                'x-meditlink-client-id' => $cred->client_id,
-            ])->get($url);
+            ->post($tokenUrl, [
+                'grant_type'    => 'authorization_code',
+                'client_id'     => $clientId,
+                'code'          => $code,
+                'redirect_uri'  => $redirectUri,
+                'code_verifier' => $codeVerifier,
+            ]);
 
-        if ($res->status() === 401) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Unauthorized/expired token. Please re-authorize.',
-            ], 200);
+        if (!$resp->successful()) {
+            Log::error('3Shape token exchange failed', [
+                'status'=>$resp->status(),
+                'body'=>$resp->body()
+            ]);
+            return redirect()->route('api-credentials.index')
+                ->with('error', '3Shape token exchange failed. Please verify redirect URI and app settings.');
         }
 
-        if ($res->successful()) {
-            $json = $res->json();
-            if ($json === null) $json = json_decode($res->body(), true);
-            return response()->json(['success' => true, 'data' => $json, 'type' => $type]);
-        }
+        $tok = $resp->json();
 
-        return response()->json([
-            'success' => false,
-            'message' => 'Failed to fetch data: ' . $res->body(),
-        ], 200);
+        ApiCredential::create([
+            'api_name'          => ApiCredential::THREESHAPE,
+            'client_id'         => $clientId,
+            'client_secret'     => null, // 3Shape doesn't give client_secret in PKCE
+            'base_url'          => $identityBase, // identity base
+            'is_active'         => true,
+            'access_token'      => $tok['access_token'] ?? null,
+            'refresh_token'     => $tok['refresh_token'] ?? null,
+            'token_expiry'      => now()->addSeconds($tok['expires_in'] ?? 3600),
+            'additional_config' => [
+                'resource_base' => session('3s.resource_base') ?: config('three_shape.resource_base'),
+            ],
+        ]);
+
+        session()->forget([
+            '3s.code_verifier',
+            '3s.state',
+            '3s.identity_base',
+            '3s.resource_base',
+            '3s.client_id',
+        ]);
+
+        return redirect()->route('api-credentials.index')
+            ->with('success', '3Shape connected successfully.');
     }
 }
