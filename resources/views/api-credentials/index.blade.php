@@ -132,7 +132,7 @@
                                                         <i class="bi bi-wifi"></i>
                                                     </button>
 
-                                                    {{-- NEW: Cases for this credential (Medit Link only & needs token) --}}
+                                                    {{-- Medit: View cases --}}
                                                     @if($credential->api_name === 'medit_link' && $credential->access_token)
                                                         <a href="{{ route('api-credentials.cases', $credential) }}"
                                                            class="btn btn-secondary btn-sm rounded-2"
@@ -142,10 +142,9 @@
                                                         </a>
                                                     @endif
 
-                                                    {{-- Medit-specific actions --}}
+                                                    {{-- Medit auth (no refresh) --}}
                                                     @if($credential->api_name === 'medit_link')
                                                         @if($credential->access_token && !$credential->isTokenExpired())
-                                                            {{-- Fetch data (example: orders) --}}
                                                             <button type="button"
                                                                     class="btn btn-info btn-sm rounded-2 fetch-data-btn"
                                                                     title="Fetch Data"
@@ -154,13 +153,45 @@
                                                                 <i class="bi bi-download"></i>
                                                             </button>
                                                         @else
-                                                            {{-- Start/Re-Authorize OAuth (no refresh flow) --}}
                                                             <a href="{{ route('oauth.authorize', ['api' => $credential->api_name]) }}"
                                                                class="btn btn-primary btn-sm rounded-2"
                                                                title="Authorize API"
                                                                data-bs-toggle="tooltip">
                                                                 <i class="bi bi-key"></i>
                                                             </a>
+                                                        @endif
+                                                    @endif
+
+                                                    {{-- 3Shape actions --}}
+                                                    @if($credential->api_name === '3shape')
+                                                        <a href="{{ route('threeshape.cases') }}"
+                                                           class="btn btn-secondary btn-sm rounded-2"
+                                                           title="Open 3Shape Cases"
+                                                           data-bs-toggle="tooltip">
+                                                            <i class="bi bi-folder2-open"></i>
+                                                        </a>
+
+                                                        @if(!$credential->access_token)
+                                                            {{-- Not connected yet: allow starting PKCE via "Add 3Shape" --}}
+                                                            <a href="{{ route('api-credentials.create', ['api' => '3shape']) }}"
+                                                               class="btn btn-primary btn-sm rounded-2"
+                                                               title="Connect 3Shape"
+                                                               data-bs-toggle="tooltip">
+                                                                <i class="bi bi-key"></i>
+                                                            </a>
+                                                        @else
+                                                            {{-- Refresh token (if present) --}}
+                                                            @if($credential->refresh_token)
+                                                                <form action="{{ route('oauth.3shape.refresh', $credential) }}" method="POST" class="d-inline">
+                                                                    @csrf
+                                                                    <button type="submit"
+                                                                            class="btn btn-warning btn-sm rounded-2"
+                                                                            title="Refresh 3Shape Token"
+                                                                            data-bs-toggle="tooltip">
+                                                                        <i class="bi bi-arrow-clockwise"></i>
+                                                                    </button>
+                                                                </form>
+                                                            @endif
                                                         @endif
                                                     @endif
 
@@ -238,7 +269,7 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     });
 
-    // Fetch data
+    // Fetch data (Medit example)
     document.querySelectorAll('.fetch-data-btn').forEach(function(btn) {
         btn.addEventListener('click', function() {
             const id = this.getAttribute('data-credential-id');
