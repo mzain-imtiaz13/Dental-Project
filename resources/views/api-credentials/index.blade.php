@@ -33,6 +33,15 @@
                 </div>
 
                 <div class="card-body">
+                    {{-- ERROR ALERT (e.g. token call failed, row deleted, etc.) --}}
+                    @if(session('error'))
+                        <div class="alert alert-danger alert-dismissible fade show" role="alert">
+                            {{ session('error') }}
+                            <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+                        </div>
+                    @endif
+
+                    {{-- SUCCESS ALERT (e.g. API connected successfully) --}}
                     @if(session('success'))
                         <div class="alert alert-success alert-dismissible fade show" role="alert">
                             {{ session('success') }}
@@ -63,7 +72,9 @@
                                                 </span>
                                             </td>
                                             <td class="py-3">
-                                                <code class="bg-light px-3 py-2 rounded-2 text-dark fw-medium">{{ Str::limit($credential->client_id, 20) }}</code>
+                                                <code class="bg-light px-3 py-2 rounded-2 text-dark fw-medium">
+                                                    {{ Str::limit($credential->client_id, 20) }}
+                                                </code>
                                             </td>
                                             <td class="py-3">
                                                 @if($credential->base_url)
@@ -71,7 +82,9 @@
                                                         <i class="bi bi-link-45deg me-1"></i>{{ Str::limit($credential->base_url, 30) }}
                                                     </a>
                                                 @else
-                                                    <span class="text-muted fw-medium"><i class="bi bi-dash-circle me-1"></i>Not set</span>
+                                                    <span class="text-muted fw-medium">
+                                                        <i class="bi bi-dash-circle me-1"></i>Not set
+                                                    </span>
                                                 @endif
                                             </td>
                                             <td class="py-3">
@@ -231,7 +244,9 @@
                                 <i class="bi bi-key-fill text-muted" style="font-size: 4rem;"></i>
                             </div>
                             <h4 class="text-muted mb-2">No API Credentials Found</h4>
-                            <p class="text-muted mb-4">Get started by adding credentials for your APIs to integrate with external services.</p>
+                            <p class="text-muted mb-4">
+                                Get started by adding credentials for your APIs to integrate with external services.
+                            </p>
                             <div class="btn-group" role="group">
                                 <a href="{{ route('api-credentials.create', ['api' => 'medit_link']) }}"
                                    class="btn btn-primary">
@@ -257,6 +272,15 @@
 
 <script>
 document.addEventListener('DOMContentLoaded', function() {
+    // Show native JS alerts as well (for both success and error)
+    @if(session('success'))
+        alert(@json(session('success')));
+    @endif
+
+    @if(session('error'))
+        alert(@json(session('error')));
+    @endif
+
     // Tooltips
     var tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'));
     var tooltipList = tooltipTriggerList.map(function (el) { return new bootstrap.Tooltip(el); });
@@ -281,7 +305,8 @@ document.addEventListener('DOMContentLoaded', function() {
         const original = button.innerHTML;
         button.disabled = true;
         button.innerHTML = '<i class="bi bi-hourglass-split"></i>';
-        button.classList.remove('btn-success'); button.classList.add('btn-secondary');
+        button.classList.remove('btn-success');
+        button.classList.add('btn-secondary');
 
         fetch(`/api-credentials/${credentialId}/test`, {
             method: 'POST',
@@ -296,7 +321,8 @@ document.addEventListener('DOMContentLoaded', function() {
         .finally(() => {
             button.disabled = false;
             button.innerHTML = original;
-            button.classList.remove('btn-secondary'); button.classList.add('btn-success');
+            button.classList.remove('btn-secondary');
+            button.classList.add('btn-success');
         });
     }
 
@@ -365,7 +391,8 @@ document.addEventListener('DOMContentLoaded', function() {
 
     function fetchApiData(credentialId, button) {
         const original = button.innerHTML;
-        button.disabled = true; button.innerHTML = '<i class="bi bi-hourglass-split"></i>';
+        button.disabled = true;
+        button.innerHTML = '<i class="bi bi-hourglass-split"></i>';
 
         fetch(`/api-credentials/${credentialId}/orders`, {
             headers: { 'Accept': 'application/json' }
@@ -373,7 +400,10 @@ document.addEventListener('DOMContentLoaded', function() {
         .then(r => r.json())
         .then(d => showDataResults(d, credentialId, 'orders'))
         .catch(() => showDataResults({ success:false, message:'Network error occurred while fetching data' }, credentialId, 'orders'))
-        .finally(() => { button.disabled = false; button.innerHTML = original; });
+        .finally(() => {
+            button.disabled = false;
+            button.innerHTML = original;
+        });
     }
 
     function showDataResults(data, credentialId, type) {
