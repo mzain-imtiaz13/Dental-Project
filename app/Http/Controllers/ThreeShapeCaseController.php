@@ -232,6 +232,66 @@ class ThreeShapeCaseController extends Controller
         ], 200);
     }
 
+     public function proxyFile(Request $request)
+    {
+        $href = $request->query('href');
+
+        if (!$href) {
+            abort(400, 'Missing href parameter');
+        }
+
+        // Get latest active 3Shape credential with a valid access token
+        $cred = ApiCredential::where('api_name', ApiCredential::THREESHAPE)
+            ->whereNotNull('access_token')
+            ->where('is_active', true)
+            ->latest()
+            ->first();
+
+        if (!$cred) {
+            abort(500, 'No active 3Shape credential with access token found.');
+        }
+
+        try {
+            $res = Http::timeout(60)
+                ->withOptions(['verify' => false])
+                ->withHeaders([
+                    'Authorization' => 'Bearer ' . $cred->access_token,
+                    'Accept'        => '*/*',
+                ])
+                ->get($href);
+
+            // If token is bad/expired, pass the status/body back (user will see error)
+            if (!$res->successful()) {
+                return response($res->body(), $res->status())
+                    ->header('Content-Type', $res->header('Content-Type') ?? 'application/json');
+            }
+
+            $contentType   = $res->header('Content-Type', 'application/octet-stream');
+            $disposition   = $res->header('Content-Disposition');
+            $contentLength = $res->header('Content-Length');
+
+            $response = response($res->body(), 200)
+                ->header('Content-Type', $contentType);
+
+            if ($disposition) {
+                $response->header('Content-Disposition', $disposition);
+            }
+
+            if ($contentLength) {
+                $response->header('Content-Length', $contentLength);
+            }
+
+            return $response;
+        } catch (\Throwable $e) {
+            Log::error('3Shape file proxy failed', [
+                'href'  => $href,
+                'error' => $e->getMessage(),
+            ]);
+
+            abort(500, 'Unable to download 3Shape file.');
+        }
+    }
+
     /**
      * OPTIONAL: refresh route (already referenced in routes)
      * If you already implemented refresh() elsewhere in ThreeShapeOAuthController

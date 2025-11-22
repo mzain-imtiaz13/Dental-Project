@@ -221,6 +221,8 @@
 let rawCases = [];
 let byUuid = new Map();
 
+const threeshapeFileProxy = '{{ route("threeshape.file") }}';
+
 const state = {
     page: 1,
     pageSize: 10,
@@ -576,19 +578,28 @@ document.addEventListener('click', async (e) => {
             <tr><td colspan="4" class="text-muted text-center small">No attachments</td></tr>
         `;
     } else {
-        atBody.innerHTML = attachments.map(att => `
+    atBody.innerHTML = attachments.map(att => {
+        const originalHref = att.Href || att.href || null;
+        // Always go through our proxy so Authorization header is added
+        const downloadHref = originalHref
+            ? `${threeshapeFileProxy}?href=${encodeURIComponent(originalHref)}`
+            : null;
+
+        return `
             <tr>
                 <td class="text-break">${safe(att.Name)}</td>
                 <td>${safe(att.Type || att.FileType)}</td>
                 <td>${fmtDateTime(att.Created)}</td>
                 <td>
-                    ${att.Href ? `<a href="${att.Href}" target="_blank" class="btn btn-sm btn-outline-primary">
-                        <i class="bi bi-download"></i> Open
-                    </a>` : '—'}
+                    ${downloadHref ? `
+                        <a href="${downloadHref}" target="_blank" class="btn btn-sm btn-outline-primary">
+                            <i class="bi bi-download"></i> Open
+                        </a>` : '—'}
                 </td>
             </tr>
-        `).join('');
-    }
+        `;
+    }).join('');
+}
 
     const scans = Array.isArray(fullDetail.Scans) ? fullDetail.Scans : [];
     if (scans.length === 0) {
@@ -596,19 +607,24 @@ document.addEventListener('click', async (e) => {
             <tr><td colspan="4" class="text-muted text-center small">No scans</td></tr>
         `;
     } else {
-        scansBody.innerHTML = scans.map(sc => `
+    scansBody.innerHTML = scans.map(sc => {
+        const originalHref = sc.Href || sc.href || null;
+        const scanHref = originalHref
+            ? `${threeshapeFileProxy}?href=${encodeURIComponent(originalHref)}`
+            : null;
+
+        return `
             <tr>
                 <td>${safe(sc.JawType)}</td>
                 <td>${safe(sc.Type)}</td>
                 <td>${safe(sc.FileType)}</td>
                 <td class="text-break">
-                    ${sc.Href
-                        ? `<a href="${sc.Href}" target="_blank">${sc.Href}</a>`
-                        : '—'}
+                    ${scanHref ? `<a href="${scanHref}" target="_blank">${scanHref}</a>` : '—'}
                 </td>
             </tr>
-        `).join('');
-    }
+        `;
+    }).join('');
+}
 
     // RAW JSON tab
     document.getElementById('rawJsonBox').textContent = JSON.stringify(fullDetail, null, 2);
