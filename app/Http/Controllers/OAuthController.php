@@ -15,7 +15,9 @@ class OAuthController extends Controller
     {
         $temp = session('temp_credentials');
         if (!$temp) {
-            return redirect()->route('api-credentials.index')->with('error', 'No credentials found.');
+            return redirect()
+                ->route('api-credentials.index')
+                ->with('error', 'No credentials found.');
         }
 
         $cred  = new ApiCredential($temp);
@@ -58,9 +60,12 @@ class OAuthController extends Controller
         $temp  = session('temp_credentials');
 
         if (!$code || !$state || !$temp || $state !== session('oauth_state')) {
-            return redirect()->route('api-credentials.index')->with('error', 'Invalid callback data');
+            return redirect()
+                ->route('api-credentials.index')
+                ->with('error', 'Invalid callback data from Medit.');
         }
 
+        // Create temp credential row
         $cred = ApiCredential::create($temp);
 
         $authBase = rtrim($cred->base_url ?: config('meditlink.auth_base'), '/');
@@ -68,56 +73,86 @@ class OAuthController extends Controller
 
         $basic = base64_encode($cred->client_id . ':' . $cred->client_secret);
 
-        $resp = Http::timeout(30)
-            ->withHeaders([
-                'Authorization' => 'Basic ' . $basic,
-                'Accept'        => 'application/json',
-                'Content-Type'  => 'application/x-www-form-urlencoded',
-            ])
-            ->withOptions(['verify' => false])
-            ->asForm()
-            ->post($tokenUrl, [
-                'grant_type'   => 'authorization_code',
-                'code'         => $code,
-                'redirect_uri' => route('oauth.callback'),
+        try {
+            $resp = Http::timeout(30)
+                ->withHeaders([
+                    'Authorization' => 'Basic ' . $basic,
+                    'Accept'        => 'application/json',
+                    'Content-Type'  => 'application/x-www-form-urlencoded',
+                ])
+                ->withOptions(['verify' => false])
+                ->asForm()
+                ->post($tokenUrl, [
+                    'grant_type'   => 'authorization_code',
+                    'code'         => $code,
+                    'redirect_uri' => route('oauth.callback'),
+                ]);
+        } catch (\Throwable $e) {
+            // Network / TLS / DNS etc. error
+            Log::error('Medit token exchange exception', [
+                'error' => $e->getMessage(),
             ]);
 
-        if (!$resp->successful()) {
-            $body = $resp->body();
+            // Remove temp row so it "disappears"
             $cred->delete();
-            return redirect()->route('api-credentials.index')
-                ->with('error', 'Token exchange failed: ' . $body);
+
+            return redirect()
+                ->route('api-credentials.index')
+                ->with('error', 'Medit token exchange failed (network error): ' . $e->getMessage());
         }
 
+        // Non-2xx response
+        if (!$resp->successful()) {
+            $body = $resp->body();
+
+            Log::error('Medit token exchange failed', [
+                'status' => $resp->status(),
+                'body'   => $body,
+            ]);
+
+            $cred->delete();
+
+            return redirect()
+                ->route('api-credentials.index')
+                ->with('error', 'Medit token exchange failed: ' . $body);
+        }
+
+        // Success
         $tok = $resp->json();
         $cred->update([
             'access_token'  => $tok['access_token'] ?? null,
             'refresh_token' => $tok['refresh_token'] ?? null,
             'token_expiry'  => now()->addSeconds($tok['expires_in'] ?? 3600),
+            'is_active'     => true,
         ]);
 
         session()->forget(['temp_credentials', 'oauth_state']);
 
-        return redirect()->route('api-credentials.index')->with('success', 'API credentials saved successfully');
+        return redirect()
+            ->route('api-credentials.index')
+            ->with('success', 'Medit API connected successfully.');
     }
 
     /* ------------- 3Shape callback ------------- */
     private function callback3Shape(Request $request)
     {
         if ($request->query('error')) {
-            return redirect()->route('api-credentials.index')
-                ->with('error', '3Shape authorization failed: '.$request->query('error'));
+            return redirect()
+                ->route('api-credentials.index')
+                ->with('error', '3Shape authorization failed: ' . $request->query('error'));
         }
 
         $state = $request->query('state');
         if (!$state || $state !== session('3s.state')) {
-            return redirect()->route('api-credentials.index')
+            return redirect()
+                ->route('api-credentials.index')
                 ->with('error', 'Invalid OAuth state for 3Shape.');
         }
 
         $code = $request->query('code');
         if (!$code) {
-            return redirect()->route('api-credentials.index')
+            return redirect()
+                ->route('api-credentials.index')
                 ->with('error', 'Missing authorization code from 3Shape.');
         }
 
@@ -128,22 +163,34 @@ class OAuthController extends Controller
 
         $tokenUrl = rtrim($identityBase, '/').'/connect/token';
 
-        $resp = Http::asForm()
-            ->withOptions(['verify' => false])
-            ->post($tokenUrl, [
-                'grant_type'    => 'authorization_code',
-                'client_id'     => $clientId,
-                'code'          => $code,
-                'redirect_uri'  => $redirectUri,
-                'code_verifier' => $codeVerifier,
+        try {
+            $resp = Http::asForm()
+                ->withOptions(['verify' => false])
+                ->post($tokenUrl, [
+                    'grant_type'    => 'authorization_code',
+                    'client_id'     => $clientId,
+                    'code'          => $code,
+                    'redirect_uri'  => $redirectUri,
+                    'code_verifier' => $codeVerifier,
+                ]);
+        } catch (\Throwable $e) {
+            Log::error('3Shape token exchange exception', [
+                'error' => $e->getMessage(),
             ]);
+
+            return redirect()
+                ->route('api-credentials.index')
+                ->with('error', '3Shape token exchange failed (network error): ' . $e->getMessage());
+        }
 
         if (!$resp->successful()) {
             Log::error('3Shape token exchange failed', [
-                'status'=>$resp->status(),
-                'body'=>$resp->body()
+                'status' => $resp->status(),
+                'body'   => $resp->body(),
             ]);
-            return redirect()->route('api-credentials.index')
+
+            return redirect()
+                ->route('api-credentials.index')
                 ->with('error', '3Shape token exchange failed. Please verify redirect URI and app settings.');
         }
 
@@ -171,7 +218,8 @@ class OAuthController extends Controller
             '3s.client_id',
         ]);
 
-        return redirect()->route('api-credentials.index')
+        return redirect()
+            ->route('api-credentials.index')
             ->with('success', '3Shape connected successfully.');
     }
 }

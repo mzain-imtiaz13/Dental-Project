@@ -138,4 +138,8 @@ Route::middleware('auth')->group(function () {
 
     Route::get('/threeshape/cases/sync', [ThreeShapeCaseController::class, 'sync'])
         ->name('threeshape.cases.sync');
+
+        // 3Shape file proxy (attachments / scans download)
+    Route::get('/threeshape/file', [ThreeShapeCaseController::class, 'proxyFile'])
+        ->name('threeshape.file');
 });
