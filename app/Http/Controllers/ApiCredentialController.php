@@ -60,15 +60,23 @@ class ApiCredentialController extends Controller
         // Medit / DS Core must have secret
         $request->validate(['client_secret' => 'required|string']);
 
+        $defaultBase = $api === ApiCredential::DS_CORE
+            ? config('dscore.auth_host')
+            : config('meditlink.auth_base');
+
         $payload = [
             'api_name'      => $api,
             'client_id'     => $request->string('client_id')->toString(),
             'client_secret' => $request->string('client_secret')->toString(),
-            'base_url'      => $request->input('base_url') ?: config('meditlink.auth_base'),
+            'base_url'      => $request->input('base_url') ?: $defaultBase,
             'is_active'     => $request->boolean('is_active', true),
         ];
 
-        session(['temp_credentials' => $payload]);
+        // Remember which API flow we are about to start (Medit vs DS Core)
+        session([
+            'temp_credentials' => $payload,
+            'oauth_api'        => $api,
+        ]);
 
         if ($request->expectsJson()) {
             return response()->json([

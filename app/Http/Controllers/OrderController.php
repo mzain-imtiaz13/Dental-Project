@@ -8,6 +8,7 @@ use App\Services\MeditPersistenceService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
+use App\Services\DScoreService;
 
 class OrderController extends Controller
 {
@@ -105,84 +106,105 @@ class OrderController extends Controller
 
     public function byCredential(Request $request, ApiCredential $apiCredential)
     {
-        if ($request->expectsJson()) {
-            try {
-                $c = $apiCredential;
+       if ($request->expectsJson()) {
+    try {
+        $c = $apiCredential;
 
-                $apiBase   = $c->resourcesBase();
-                $url       = $apiBase . '/v1/orders/search';
-                $groupUuid = $c->additional_config['group_uuid'] ?? env('MEDIT_GROUP_UUID');
+        if ($c->api_name === ApiCredential::DS_CORE) {
+            // DS Core: fetch directly from DS Core orders endpoint
+            $svc     = new DScoreService();
+            $payload = $svc->orders($c, [
+                // Adjust query params if DS Core supports pagination/filters
+            ]);
 
-                $headers = [
-                    'Authorization'         => 'Bearer ' . $c->access_token,
-                    'Accept'                => 'application/json',
-                    'Content-Type'          => 'application/json',
-                    'x-meditlink-client-id' => $c->client_id,
-                ];
-                if ($groupUuid) {
-                    $headers['x-meditlink-group-uuid'] = $groupUuid;
-                }
+            $orders = is_array($payload) ? $payload : [];
 
-                $res = Http::withOptions(['verify' => false])
-                    ->withHeaders($headers)
-                    ->get($url, [
-                        'schema' => 'latest',
-                        'size'   => (int) $request->get('size', 20),
-                        'page'   => (int) $request->get('page', 0),
-                        'start'  => 0,
-                        'end'    => 253402300799000,
-                    ]);
-
-                if ($res->status() === 401) {
-                    return response()->json([
-                        'success' => false,
-                        'message' => 'Unauthorized/expired token. Please re-authorize.',
-                    ], 200);
-                }
-
-                if (!$res->successful()) {
-                    return response()->json([
-                        'success' => false,
-                        'message' => 'Failed: '.$res->status().' '.$res->body(),
-                    ], 200);
-                }
-
-                // robust JSON parse
-                $payload = $res->json();
-                if ($payload === null) {
-                    $payload = json_decode($res->body(), true);
-                }
-                if (!is_array($payload)) {
-                    Log::warning('Orders response not array/JSON', ['body' => $res->body()]);
-                    $payload = ['content' => []];
-                }
-
-                (new MeditPersistenceService())->upsertOrders($payload, $c);
-
-                $content = $payload['content'] ?? (is_array($payload) ? $payload : []);
-
-                return response()->json([
-                    'success' => true,
-                    'data' => [
-                        'orders'       => $content,
-                        'total_count'  => is_array($content) ? count($content) : 0,
-                        'api_statuses' => [
-                            $c->api_name ?? 'medit_link' => ['status' => 'success', 'message' => 'Connected'],
-                        ],
+            return response()->json([
+                'success' => true,
+                'data' => [
+                    'orders'       => $orders,
+                    'total_count'  => is_array($orders) ? count($orders) : 0,
+                    'api_statuses' => [
+                        $c->api_name => ['status' => 'success', 'message' => 'Connected (DS Core)'],
                     ],
-                ]);
-            } catch (\Throwable $e) {
-                Log::error('Orders byCredential failed', [
-                    'cred_id' => $apiCredential->id,
-                    'error'   => $e->getMessage(),
-                ]);
-
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Unable to fetch orders: '.$e->getMessage(),
-                ], 200);
-            }
+                ],
+            ]);
         }
+
+        // Existing Medit flow (unchanged)
+        $apiBase   = $c->resourcesBase();
+        $url       = $apiBase . '/v1/orders/search';
+        $groupUuid = $c->additional_config['group_uuid'] ?? env('MEDIT_GROUP_UUID');
+
+        $headers = [
+            'Authorization'         => 'Bearer ' . $c->access_token,
+            'Accept'                => 'application/json',
+            'Content-Type'          => 'application/json',
+            'x-meditlink-client-id' => $c->client_id,
+        ];
+        if ($groupUuid) {
+            $headers['x-meditlink-group-uuid'] = $groupUuid;
+        }
+
+        $res = Http::withOptions(['verify' => false])
+            ->withHeaders($headers)
+            ->get($url, [
+                'schema' => 'latest',
+                'size'   => (int) $request->get('size', 20),
+                'page'   => (int) $request->get('page', 0),
+                'start'  => 0,
+                'end'    => 253402300799000,
+            ]);
+
+        if ($res->status() === 401) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Unauthorized/expired token. Please re-authorize.',
+            ], 200);
+        }
+
+        if (!$res->successful()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed: '.$res->status().' '.$res->body(),
+            ], 200);
+        }
+
+        $payload = $res->json();
+        if ($payload === null) {
+            $payload = json_decode($res->body(), true);
+        }
+        if (!is_array($payload)) {
+            Log::warning('Orders response not array/JSON', ['body' => $res->body()]);
+            $payload = ['content' => []];
+        }
+
+        (new MeditPersistenceService())->upsertOrders($payload, $c);
+
+        $content = $payload['content'] ?? (is_array($payload) ? $payload : []);
+
+        return response()->json([
+            'success' => true,
+            'data' => [
+                'orders'       => $content,
+                'total_count'  => is_array($content) ? count($content) : 0,
+                'api_statuses' => [
+                    $c->api_name ?? 'medit_link' => ['status' => 'success', 'message' => 'Connected'],
+                ],
+            ],
+        ]);
+    } catch (\Throwable $e) {
+        Log::error('Orders byCredential failed', [
+            'cred_id' => $apiCredential->id,
+            'error'   => $e->getMessage(),
+        ]);
+
+        return response()->json([
+            'success' => false,
+            'message' => 'Unable to fetch orders: '.$e->getMessage(),
+        ], 200);
+    }
+}
 
         return view('orders_by_credential', ['credential' => $apiCredential]);
     }
