@@ -184,7 +184,7 @@
                                                             <i class="bi bi-folder2-open"></i>
                                                         </a>
 
-                                                        @if(!$credential->access_token)
+                                                        <!-- @if(!$credential->access_token)
                                                             {{-- Not connected yet: allow starting PKCE via "Add 3Shape" --}}
                                                             <a href="{{ route('api-credentials.create', ['api' => '3shape']) }}"
                                                                class="btn btn-primary btn-sm rounded-2"
@@ -206,7 +206,7 @@
                                                                 </form>
                                                             @endif
                                                         @endif
-                                                    @endif
+                                                    @endif -->
 
                                                     {{-- Toggle active --}}
                                                     <form action="{{ route('api-credentials.toggle', $credential) }}" method="POST" class="d-inline">
