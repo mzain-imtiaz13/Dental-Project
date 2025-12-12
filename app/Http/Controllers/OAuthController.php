@@ -7,6 +7,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Str;
 use Illuminate\Support\Facades\Log;
+use App\Services\DScoreService;
 
 class OAuthController extends Controller
 {
@@ -14,43 +15,59 @@ class OAuthController extends Controller
     public function authorize(Request $request)
     {
         $temp = session('temp_credentials');
-        if (!$temp) {
-            return redirect()
-                ->route('api-credentials.index')
-                ->with('error', 'No credentials found.');
-        }
+if (!$temp) {
+    return redirect()
+        ->route('api-credentials.index')
+        ->with('error', 'No credentials found.');
+}
 
-        $cred  = new ApiCredential($temp);
-        $state = Str::random(40);
-        session(['oauth_state' => $state]);
+$cred  = new ApiCredential($temp);
+$state = Str::random(40);
+session(['oauth_state' => $state]);
 
-        $authBase = rtrim($cred->base_url ?: config('meditlink.auth_base'), '/');
-        $callback = route('oauth.callback');
+// DS Core vs Medit
+if (($cred->api_name ?? null) === ApiCredential::DS_CORE) {
+    // Use DS Core authorize URL (secureLogin)
+    $dsService = new DScoreService();
+    $url       = $dsService->buildAuthorizeUrl($state);
 
-        $scope = trim(preg_replace('/\s+/', ' ', config('meditlink.scope', 'USER GROUP ORDER CASE')));
+    return redirect()->away($url);
+}
 
-        $params = http_build_query([
-            'client_id'     => $cred->client_id,
-            'response_type' => 'code',
-            'redirect_uri'  => $callback,
-            'scope'         => $scope,
-            'state'         => $state,
-        ]);
+// Default: Medit Link
+$authBase = rtrim($cred->base_url ?: config('meditlink.auth_base'), '/');
+$callback = route('oauth.callback');
 
-        return redirect($authBase . '/oauth/authorize?' . $params);
+$scope = trim(preg_replace('/\s+/', ' ', config('meditlink.scope', 'USER GROUP ORDER CASE')));
+
+$params = http_build_query([
+    'client_id'     => $cred->client_id,
+    'response_type' => 'code',
+    'redirect_uri'  => $callback,
+    'scope'         => $scope,
+    'state'         => $state,
+]);
+
+return redirect($authBase . '/oauth/authorize?' . $params);
     }
 
     /* ===== unified callback entry point ===== */
     public function sharedCallback(Request $request)
-    {
-        $iss = (string) $request->query('iss', '');
+{
+    $iss = (string) $request->query('iss', '');
 
-        if (str_contains($iss, '3shape.com') || session()->has('3s.state')) {
-            return $this->callback3Shape($request);
-        }
-
-        return $this->callbackMedit($request);
+    if (str_contains($iss, '3shape.com') || session()->has('3s.state')) {
+        return $this->callback3Shape($request);
     }
+
+    // If we know this is a DS Core flow (flag in session), use DS callback
+    if (session()->get('temp_credentials.api_name') === ApiCredential::DS_CORE ||
+        (session('temp_credentials')['api_name'] ?? null) === ApiCredential::DS_CORE) {
+        return $this->callbackDsCore($request);
+    }
+
+    return $this->callbackMedit($request);
+}
 
     /* ------------- Medit callback ------------- */
     private function callbackMedit(Request $request)
@@ -132,6 +149,39 @@ class OAuthController extends Controller
             ->route('api-credentials.index')
             ->with('success', 'Medit API connected successfully.');
     }
+
+    private function callbackDsCore(Request $request)
+{
+    $code  = $request->get('code');
+    $state = $request->get('state');
+    $temp  = session('temp_credentials');
+
+    if (!$code || !$state || !$temp || $state !== session('oauth_state')) {
+        return redirect()
+            ->route('api-credentials.index')
+            ->with('error', 'Invalid callback data from DS Core.');
+    }
+
+    // Create credential row using the temp payload
+    $cred = ApiCredential::create($temp);
+
+    try {
+        $dsService = new DScoreService();
+        $dsService->exchangeCodeForToken($code, $cred);
+    } catch (\Throwable $e) {
+        $cred->delete();
+
+        return redirect()
+            ->route('api-credentials.index')
+            ->with('error', 'DS Core token exchange failed: ' . $e->getMessage());
+    }
+
+    session()->forget(['temp_credentials', 'oauth_state']);
+
+    return redirect()
+        ->route('api-credentials.index')
+        ->with('success', 'DS Core API connected successfully.');
+}
 
     /* ------------- 3Shape callback ------------- */
     private function callback3Shape(Request $request)
