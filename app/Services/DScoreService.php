@@ -11,9 +11,33 @@ class DScoreService
 {
     public const API_NAME = 'ds_core';
 
-    public function credentials(): ApiCredential
+    private function requiredConfig(): array
     {
         $cfg = config('dscore');
+
+        $clientId = $cfg['client_id'] ?? null;
+        if (!$clientId) {
+            $clientId = env('DSCORE_CLIENT_ID');
+        }
+
+        $clientSecret = $cfg['client_secret'] ?? null;
+        if (!$clientSecret) {
+            $clientSecret = env('DSCORE_CLIENT_SECRET');
+        }
+
+        if (!$clientId || !$clientSecret) {
+            throw new \RuntimeException('DS Core is not configured: DSCORE_CLIENT_ID/DSCORE_CLIENT_SECRET are missing. Set them in .env and clear config cache.');
+        }
+
+        $cfg['client_id'] = $clientId;
+        $cfg['client_secret'] = $clientSecret;
+
+        return $cfg;
+    }
+
+    public function credentials(): ApiCredential
+    {
+        $cfg = $this->requiredConfig();
 
         $cred = ApiCredential::firstOrCreate(
             ['api_name' => self::API_NAME],
@@ -81,7 +105,7 @@ class DScoreService
 
     public function exchangeCodeForToken(string $code, ApiCredential $cred): ApiCredential
     {
-        $cfg      = config('dscore');
+        $cfg      = $this->requiredConfig();
         $tokenUrl = $cred->additional_config['token_url'] ?? $cfg['token_url'];
 
         $resp = Http::asForm()
