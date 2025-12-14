@@ -11,72 +11,73 @@ class DScoreService
 {
     public const API_NAME = 'ds_core';
 
-    private function requiredConfig(): array
+    /**
+     * Get or create DS Core credentials.
+     * Uses database as primary source, env variables only for initial bootstrap.
+     */
+    public function credentials(): ApiCredential
     {
         $cfg = config('dscore');
 
-        $clientId = $cfg['client_id'] ?? null;
-        if (!$clientId) {
-            $clientId = env('DSCORE_CLIENT_ID');
+        // Try to get existing credentials from database
+        $cred = ApiCredential::where('api_name', self::API_NAME)->first();
+
+        // If credentials exist in database, use them (database is source of truth)
+        if ($cred) {
+            // Ensure additional_config has the URLs (in case they were added after creation)
+            $ac = $cred->additional_config ?? [];
+            $dirty = false;
+            
+            if (empty($ac['auth_url'])) {
+                $ac['auth_url'] = $cfg['auth_url'];
+                $dirty = true;
+            }
+            if (empty($ac['token_url'])) {
+                $ac['token_url'] = $cfg['token_url'];
+                $dirty = true;
+            }
+            if (empty($ac['orders_url'])) {
+                $ac['orders_url'] = $cfg['orders_url'];
+                $dirty = true;
+            }
+            if (empty($ac['scope'])) {
+                $ac['scope'] = $cfg['scope'];
+                $dirty = true;
+            }
+            
+            if ($dirty) {
+                $cred->additional_config = $ac;
+                $cred->save();
+            }
+
+            return $cred;
         }
 
+        // No credentials in database - try to bootstrap from env
+        $clientId = $cfg['client_id'] ?? null;
         $clientSecret = $cfg['client_secret'] ?? null;
-        if (!$clientSecret) {
-            $clientSecret = env('DSCORE_CLIENT_SECRET');
-        }
 
         if (!$clientId || !$clientSecret) {
-            throw new \RuntimeException('DS Core is not configured: DSCORE_CLIENT_ID/DSCORE_CLIENT_SECRET are missing. Set them in .env and clear config cache.');
+            throw new \RuntimeException(
+                'DS Core credentials not found. Please add them via the API Credentials UI, ' .
+                'or set DSCORE_CLIENT_ID and DSCORE_CLIENT_SECRET in your .env file for initial bootstrap.'
+            );
         }
 
-        $cfg['client_id'] = $clientId;
-        $cfg['client_secret'] = $clientSecret;
-
-        return $cfg;
-    }
-
-    public function credentials(): ApiCredential
-    {
-        $cfg = $this->requiredConfig();
-
-        $cred = ApiCredential::firstOrCreate(
-            ['api_name' => self::API_NAME],
-            [
-                'client_id'         => $cfg['client_id'],
-                'client_secret'     => $cfg['client_secret'],
-                'base_url'          => $cfg['auth_host'],
-                'is_active'         => true,
-                'additional_config' => [
-                    'auth_url'   => $cfg['auth_url'],
-                    'token_url'  => $cfg['token_url'],
-                    'orders_url' => $cfg['orders_url'],
-                    'scope'      => $cfg['scope'],
-                ],
-            ]
-        );
-
-        $dirty = false;
-        if ($cred->client_id !== $cfg['client_id'])         { $cred->client_id = $cfg['client_id']; $dirty = true; }
-        if ($cred->client_secret !== $cfg['client_secret']) { $cred->client_secret = $cfg['client_secret']; $dirty = true; }
-        if (!$cred->base_url)                               { $cred->base_url = $cfg['auth_host']; $dirty = true; }
-
-        $ac = $cred->additional_config ?? [];
-        $map = [
-            'auth_url'   => $cfg['auth_url'],
-            'token_url'  => $cfg['token_url'],
-            'orders_url' => $cfg['orders_url'],
-            'scope'      => $cfg['scope'],
-        ];
-        foreach ($map as $k => $v) {
-            if (($ac[$k] ?? null) !== $v) {
-                $ac[$k] = $v;
-                $dirty  = true;
-            }
-        }
-        if ($dirty) {
-            $cred->additional_config = $ac;
-            $cred->save();
-        }
+        // Create initial credentials from env
+        $cred = ApiCredential::create([
+            'api_name'          => self::API_NAME,
+            'client_id'         => $clientId,
+            'client_secret'     => $clientSecret,
+            'base_url'          => $cfg['auth_host'],
+            'is_active'         => true,
+            'additional_config' => [
+                'auth_url'   => $cfg['auth_url'],
+                'token_url'  => $cfg['token_url'],
+                'orders_url' => $cfg['orders_url'],
+                'scope'      => $cfg['scope'],
+            ],
+        ]);
 
         return $cred;
     }
@@ -94,8 +95,9 @@ class DScoreService
             'state'         => $state,
         ];
 
-        if (!empty($cfg['scope'])) {
-            $params['scope'] = $cfg['scope'];
+        $scope = $cred->additional_config['scope'] ?? $cfg['scope'];
+        if (!empty($scope)) {
+            $params['scope'] = $scope;
         }
 
         $authUrl = $cred->additional_config['auth_url'] ?? $cfg['auth_url'];
@@ -105,7 +107,7 @@ class DScoreService
 
     public function exchangeCodeForToken(string $code, ApiCredential $cred): ApiCredential
     {
-        $cfg      = $this->requiredConfig();
+        $cfg      = config('dscore');
         $tokenUrl = $cred->additional_config['token_url'] ?? $cfg['token_url'];
 
         $resp = Http::asForm()
