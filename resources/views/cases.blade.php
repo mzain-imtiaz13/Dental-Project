@@ -110,11 +110,11 @@
                             Attachments / Scans
                         </button>
                     </li>
-                    <li class="nav-item" role="presentation">
+                    <!-- <li class="nav-item" role="presentation">
                         <button class="nav-link" id="raw-tab" data-bs-toggle="tab" data-bs-target="#raw-pane" type="button" role="tab">
                             Raw JSON
                         </button>
-                    </li>
+                    </li> -->
                 </ul>
 
                 <div class="tab-content p-3" id="caseDetailTabContent">
