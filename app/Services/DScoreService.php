@@ -113,8 +113,9 @@ class DScoreService
             'state'         => $state,
         ];
 
-        if (!empty($cfg['scope'])) {
-            $params['scope'] = $cfg['scope'];
+        $scope = $cred->additional_config['scope'] ?? $cfg['scope'];
+        if (!empty($scope)) {
+            $params['scope'] = $scope;
         }
 
         $authUrl = $cfg['auth_url'];
