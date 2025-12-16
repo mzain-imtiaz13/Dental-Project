@@ -15,8 +15,8 @@ class OAuthController extends Controller
     public function authorize(Request $request)
     {
         $temp = session('temp_credentials');
-if (!$temp) {
-    return redirect()
+        if (!$temp) {
+        return redirect()
         ->route('api-credentials.index')
         ->with('error', 'No credentials found.');
 }
@@ -51,7 +51,6 @@ $params = http_build_query([
 return redirect($authBase . '/oauth/authorize?' . $params);
     }
 
-    /* ===== unified callback entry point ===== */
     public function sharedCallback(Request $request)
 {
     $iss = (string) $request->query('iss', '');
@@ -60,12 +59,10 @@ return redirect($authBase . '/oauth/authorize?' . $params);
         return $this->callback3Shape($request);
     }
 
-    // If we know this is a DS Core flow (flag in session), use DS callback
     if (session()->get('temp_credentials.api_name') === ApiCredential::DS_CORE ||
         (session('temp_credentials')['api_name'] ?? null) === ApiCredential::DS_CORE) {
         return $this->callbackDsCore($request);
     }
-
     return $this->callbackMedit($request);
 }
 

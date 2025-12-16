@@ -10,7 +10,6 @@ use Illuminate\Support\Str;
 class DScoreService
 {
     public const API_NAME = 'ds_core';
-
     private function requiredConfig(?string $clientId = null, ?string $clientSecret = null, bool $requireSecret = true): array
     {
         $cfg = config('dscore');
@@ -34,7 +33,6 @@ class DScoreService
         if (!$resolvedClientId || ($requireSecret && !$resolvedClientSecret)) {
             throw new \RuntimeException('DS Core credentials not found. Please add them via the API Credentials UI, or set DSCORE_CLIENT_ID and DSCORE_CLIENT_SECRET in your .env file for initial bootstrap.');
         }
-
         $cfg['client_id'] = $resolvedClientId;
         $cfg['client_secret'] = $resolvedClientSecret;
 
@@ -44,7 +42,6 @@ class DScoreService
     public function credentials(): ApiCredential
     {
         $cfg = $this->requiredConfig();
-
         $cred = ApiCredential::firstOrCreate(
             ['api_name' => self::API_NAME],
             [
