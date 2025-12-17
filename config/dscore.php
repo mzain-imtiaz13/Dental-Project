@@ -26,5 +26,5 @@ return [
     ),
 
     // If DS Core publishes scopes, configure here; otherwise DS can ignore it
-    'scope' => env('DSCORE_SCOPE', ''),
+    'scope' => env('DSCORE_SCOPE', 'openid'),
 ];

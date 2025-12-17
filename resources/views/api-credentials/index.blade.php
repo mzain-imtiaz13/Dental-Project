@@ -183,30 +183,7 @@
                                                            data-bs-toggle="tooltip">
                                                             <i class="bi bi-folder2-open"></i>
                                                         </a>
-
-                                                        <!-- @if(!$credential->access_token)
-                                                            {{-- Not connected yet: allow starting PKCE via "Add 3Shape" --}}
-                                                            <a href="{{ route('api-credentials.create', ['api' => '3shape']) }}"
-                                                               class="btn btn-primary btn-sm rounded-2"
-                                                               title="Connect 3Shape"
-                                                               data-bs-toggle="tooltip">
-                                                                <i class="bi bi-key"></i>
-                                                            </a>
-                                                        @else
-                                                            {{-- Refresh token (if present) --}}
-                                                            @if($credential->refresh_token)
-                                                                <form action="{{ route('oauth.3shape.refresh', $credential) }}" method="POST" class="d-inline">
-                                                                    @csrf
-                                                                    <button type="submit"
-                                                                            class="btn btn-warning btn-sm rounded-2"
-                                                                            title="Refresh 3Shape Token"
-                                                                            data-bs-toggle="tooltip">
-                                                                        <i class="bi bi-arrow-clockwise"></i>
-                                                                    </button>
-                                                                </form>
-                                                            @endif
-                                                        @endif
-                                                    @endif -->
+                                                    @endif
 
                                                     {{-- Toggle active --}}
                                                     <form action="{{ route('api-credentials.toggle', $credential) }}" method="POST" class="d-inline">

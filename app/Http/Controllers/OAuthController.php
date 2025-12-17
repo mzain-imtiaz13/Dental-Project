@@ -25,8 +25,17 @@ $cred  = new ApiCredential($temp);
 $state = Str::random(40);
 session(['oauth_state' => $state]);
 
+        session()->forget([
+            '3s.code_verifier',
+            '3s.state',
+            '3s.identity_base',
+            '3s.resource_base',
+            '3s.client_id',
+        ]);
+
 // DS Core vs Medit
 if (($cred->api_name ?? null) === ApiCredential::DS_CORE) {
+    session(['oauth_provider' => ApiCredential::DS_CORE]);
     // Use DS Core authorize URL (secureLogin)
     $dsService = new DScoreService();
     $url       = $dsService->buildAuthorizeUrl($state);
@@ -35,6 +44,7 @@ if (($cred->api_name ?? null) === ApiCredential::DS_CORE) {
 }
 
 // Default: Medit Link
+session(['oauth_provider' => ApiCredential::MEDIT_LINK]);
 $authBase = rtrim($cred->base_url ?: config('meditlink.auth_base'), '/');
 $callback = route('oauth.callback');
 
@@ -55,7 +65,18 @@ return redirect($authBase . '/oauth/authorize?' . $params);
 {
     $iss = (string) $request->query('iss', '');
 
-    if (str_contains($iss, '3shape.com') || session()->has('3s.state')) {
+    $provider = session('oauth_provider');
+    if ($provider === ApiCredential::DS_CORE) {
+        return $this->callbackDsCore($request);
+    }
+    if ($provider === ApiCredential::MEDIT_LINK) {
+        return $this->callbackMedit($request);
+    }
+    if ($provider === ApiCredential::THREESHAPE) {
+        return $this->callback3Shape($request);
+    }
+
+    if (str_contains($iss, '3shape.com')) {
         return $this->callback3Shape($request);
     }
 
@@ -141,6 +162,7 @@ return redirect($authBase . '/oauth/authorize?' . $params);
         ]);
 
         session()->forget(['temp_credentials', 'oauth_state']);
+        session()->forget(['oauth_provider']);
 
         return redirect()
             ->route('api-credentials.index')
@@ -149,11 +171,31 @@ return redirect($authBase . '/oauth/authorize?' . $params);
 
     private function callbackDsCore(Request $request)
 {
+    if ($request->query('error')) {
+        $err  = (string) $request->query('error');
+        $desc = (string) $request->query('error_description', '');
+
+        session()->forget(['temp_credentials', 'oauth_state']);
+        session()->forget(['oauth_provider']);
+
+        $msg = 'DS Core authorization failed: ' . $err;
+        if ($desc !== '') {
+            $msg .= ' (' . $desc . ')';
+        }
+
+        return redirect()
+            ->route('api-credentials.index')
+            ->with('error', $msg);
+    }
+
     $code  = $request->get('code');
     $state = $request->get('state');
     $temp  = session('temp_credentials');
 
     if (!$code || !$state || !$temp || $state !== session('oauth_state')) {
+        session()->forget(['temp_credentials', 'oauth_state']);
+        session()->forget(['oauth_provider']);
+
         return redirect()
             ->route('api-credentials.index')
             ->with('error', 'Invalid callback data from DS Core.');
@@ -174,6 +216,7 @@ return redirect($authBase . '/oauth/authorize?' . $params);
     }
 
     session()->forget(['temp_credentials', 'oauth_state']);
+    session()->forget(['oauth_provider']);
 
     return redirect()
         ->route('api-credentials.index')
@@ -264,6 +307,8 @@ return redirect($authBase . '/oauth/authorize?' . $params);
             '3s.resource_base',
             '3s.client_id',
         ]);
+
+        session()->forget(['oauth_provider']);
 
         return redirect()
             ->route('api-credentials.index')

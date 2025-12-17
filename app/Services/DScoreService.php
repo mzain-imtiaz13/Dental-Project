@@ -110,7 +110,9 @@ class DScoreService
             'state'         => $state,
         ];
 
-        $scope = $cred->additional_config['scope'] ?? $cfg['scope'];
+        $scope = session('temp_credentials.scope')
+            ?: (session('temp_credentials')['scope'] ?? null)
+            ?: ($cfg['scope'] ?? '');
         if (!empty($scope)) {
             $params['scope'] = $scope;
         }
