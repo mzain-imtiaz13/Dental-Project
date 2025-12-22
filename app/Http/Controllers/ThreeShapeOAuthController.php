@@ -13,9 +13,24 @@ class ThreeShapeOAuthController extends Controller
 
     public function start(Request $request)
     {
-        $clientId     = $request->input('client_id')     ?: config('three_shape.client_id');
-        $identityBase = rtrim($request->input('identity_base') ?: config('three_shape.identity_base'), '/');
-        $resourceBase = rtrim($request->input('resource_base') ?: config('three_shape.resource_base'), '/');
+        $temp = session('three_shape_temp', []);
+
+        session(['oauth_provider' => \App\Models\ApiCredential::THREESHAPE]);
+        session()->forget(['temp_credentials', 'oauth_state']);
+
+        $clientId = $request->input('client_id')
+            ?: ($temp['client_id'] ?? null)
+            ?: config('three_shape.client_id');
+
+        $identityBase = $request->input('identity_base')
+            ?: ($temp['base_url'] ?? null)
+            ?: config('three_shape.identity_base');
+        $identityBase = rtrim($identityBase, '/');
+
+        $resourceBase = $request->input('resource_base')
+            ?: ($temp['additional_config']['resource_base'] ?? null)
+            ?: config('three_shape.resource_base');
+        $resourceBase = rtrim($resourceBase, '/');
         $redirectUri  = $this->redirectUri();
         $scope        = config('three_shape.scope');
 
