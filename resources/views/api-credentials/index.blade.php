@@ -175,6 +175,17 @@
                                                         @endif
                                                     @endif
 
+                                                    {{-- DS Core: Fetch Orders --}}
+                                                    @if($credential->api_name === 'ds_core' && $credential->access_token && !$credential->isTokenExpired())
+                                                        <button type="button"
+                                                                class="btn btn-info btn-sm rounded-2 fetch-dscore-orders-btn"
+                                                                title="Fetch DS Core Orders"
+                                                                data-bs-toggle="tooltip"
+                                                                data-credential-id="{{ $credential->id }}">
+                                                            <i class="bi bi-download"></i>
+                                                        </button>
+                                                    @endif
+
                                                     {{-- 3Shape actions --}}
                                                     @if($credential->api_name === '3shape')
                                                         <a href="{{ route('threeshape.cases') }}"
@@ -275,6 +286,14 @@ document.addEventListener('DOMContentLoaded', function() {
         btn.addEventListener('click', function() {
             const id = this.getAttribute('data-credential-id');
             fetchApiData(id, this);
+        });
+    });
+
+    // Fetch DS Core Orders
+    document.querySelectorAll('.fetch-dscore-orders-btn').forEach(function(btn) {
+        btn.addEventListener('click', function() {
+            const id = this.getAttribute('data-credential-id');
+            fetchDScoreOrders(id, this);
         });
     });
 
@@ -381,6 +400,92 @@ document.addEventListener('DOMContentLoaded', function() {
             button.disabled = false;
             button.innerHTML = original;
         });
+    }
+
+    function fetchDScoreOrders(credentialId, button) {
+        const original = button.innerHTML;
+        button.disabled = true;
+        button.innerHTML = '<i class="bi bi-hourglass-split"></i>';
+
+        fetch(`/api-credentials/${credentialId}/fetch-dscore-orders`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Accept': 'application/json',
+                'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').getAttribute('content')
+            }
+        })
+        .then(r => r.json())
+        .then(d => showDScoreOrdersResults(d))
+        .catch(() => showDScoreOrdersResults({success: false, message: 'Network error occurred while fetching DS Core orders'}))
+        .finally(() => {
+            button.disabled = false;
+            button.innerHTML = original;
+        });
+    }
+
+    function showDScoreOrdersResults(data) {
+        const ordersHtml = data.success && data.data && data.data.orders && data.data.orders.length > 0
+            ? `<div class="table-responsive">
+                <table class="table table-striped table-hover table-sm">
+                    <thead class="table-dark">
+                        <tr>
+                            <th>Order ID</th>
+                            <th>Order #</th>
+                            <th>Status</th>
+                            <th>Patient</th>
+                            <th>Practice</th>
+                            <th>Lab</th>
+                            <th>Order Date</th>
+                            <th>Due Date</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${data.data.orders.map(o => `
+                            <tr>
+                                <td><code>${o.order_id || '-'}</code></td>
+                                <td>${o.order_number || '-'}</td>
+                                <td><span class="badge bg-secondary">${o.status || '-'}</span></td>
+                                <td>${o.patient_name || '-'}</td>
+                                <td>${o.practice_name || '-'}</td>
+                                <td>${o.lab_name || '-'}</td>
+                                <td>${o.order_date ? new Date(o.order_date).toLocaleDateString() : '-'}</td>
+                                <td>${o.due_date ? new Date(o.due_date).toLocaleDateString() : '-'}</td>
+                            </tr>
+                        `).join('')}
+                    </tbody>
+                </table>
+               </div>`
+            : '<p class="text-muted">No orders found or returned from DS Core API.</p>';
+
+        const html = `
+            <div class="modal fade" id="dscoreOrdersModal" tabindex="-1">
+                <div class="modal-dialog modal-xl">
+                    <div class="modal-content">
+                        <div class="modal-header">
+                            <h5 class="modal-title">
+                                <i class="bi bi-${data.success ? 'check-circle text-success' : 'x-circle text-danger'}"></i>
+                                DS Core Orders
+                            </h5>
+                            <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                        </div>
+                        <div class="modal-body">
+                            <div class="alert alert-${data.success ? 'success' : 'danger'}">
+                                <strong>${data.message}</strong>
+                                ${data.success && data.data ? ` (${data.data.count} orders)` : ''}
+                            </div>
+                            ${ordersHtml}
+                        </div>
+                        <div class="modal-footer">
+                            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                        </div>
+                    </div>
+                </div>
+            </div>`;
+        const existing = document.getElementById('dscoreOrdersModal');
+        if (existing) existing.remove();
+        document.body.insertAdjacentHTML('beforeend', html);
+        new bootstrap.Modal(document.getElementById('dscoreOrdersModal')).show();
     }
 
     function showDataResults(data, credentialId, type) {

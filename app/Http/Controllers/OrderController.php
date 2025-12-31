@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\ApiCredential;
+use App\Models\DScoreOrder;
 use App\Models\MeditOrder;
 use App\Services\MeditPersistenceService;
 use Illuminate\Http\Request;
@@ -22,84 +23,146 @@ class OrderController extends Controller
 
     private function getOrdersFromDb(Request $request)
     {
-        $query = MeditOrder::query()
-            ->with(['credential', 'case'])
-            ->orderByDesc('date_created')
-            ->orderByDesc('created_at');
+        $source = $request->get('source', 'all'); // 'all', 'medit', 'dscore'
 
-        if ($request->filled('status')) {
-            $query->where('status', $request->string('status'));
+        $meditOrders = collect();
+        $dscoreOrders = collect();
+
+        // Fetch Medit orders
+        if ($source === 'all' || $source === 'medit') {
+            $meditQuery = MeditOrder::query()
+                ->with(['credential', 'case'])
+                ->orderByDesc('date_created')
+                ->orderByDesc('created_at');
+
+            if ($request->filled('status')) {
+                $meditQuery->where('status', $request->string('status'));
+            }
+
+            $meditOrders = $meditQuery->get()->map(function (MeditOrder $o) {
+                return [
+                    'id'         => (int)$o->order_number,
+                    'order_id'   => $o->order_number,
+                    'created_at' => optional($o->date_created)->toIso8601String(),
+                    'updated_at' => optional($o->date_updated)->toIso8601String(),
+                    'status'     => $o->status ?? '-',
+                    'patient'    => [
+                        'name' => $o->case?->patient_name,
+                        'code' => $o->case?->patient_code,
+                    ],
+                    'case'       => [
+                        'uuid'   => $o->case_uuid,
+                        'name'   => $o->case?->name,
+                        'status' => $o->case?->status,
+                    ],
+                    'buyer'      => $o->buyer_name,
+                    'seller'     => $o->seller_name,
+                    'source_api' => 'Meditlink',
+                    'details'    => [
+                        'status'                => $o->status,
+                        'date_created'          => optional($o->date_created)->toIso8601String(),
+                        'date_updated'          => optional($o->date_updated)->toIso8601String(),
+                        'date_desired_delivery' => optional($o->date_desired_delivery)->toIso8601String(),
+                        'buyer' => [
+                            'uuid' => $o->buyer_group_uuid,
+                            'name' => $o->buyer_name,
+                            'type' => $o->buyer_type,
+                        ],
+                        'seller' => [
+                            'uuid' => $o->seller_group_uuid,
+                            'name' => $o->seller_name,
+                            'type' => $o->seller_type,
+                        ],
+                        'case' => [
+                            'uuid'         => $o->case_uuid,
+                            'name'         => $o->case?->name,
+                            'status'       => $o->case?->status,
+                            'patient_name' => $o->case?->patient_name,
+                            'patient_code' => $o->case?->patient_code,
+                        ],
+                        'credential' => [
+                            'id'  => $o->credential?->id,
+                            'api' => $o->credential?->api_name,
+                            'name'=> $o->credential?->api_display_name,
+                        ],
+                        'raw' => $o->raw,
+                    ],
+                ];
+            });
         }
-        if ($request->filled('buyer')) {
-            $query->where('buyer_name', 'like', '%'.$request->string('buyer').'%');
+
+        // Fetch DS Core orders
+        if ($source === 'all' || $source === 'dscore') {
+            $dscoreQuery = DScoreOrder::query()
+                ->with(['credential'])
+                ->orderByDesc('order_date')
+                ->orderByDesc('created_at');
+
+            if ($request->filled('status')) {
+                $dscoreQuery->where('status', $request->string('status'));
+            }
+
+            $dscoreOrders = $dscoreQuery->get()->map(function (DScoreOrder $o) {
+                return [
+                    'id'         => $o->id,
+                    'order_id'   => $o->order_id,
+                    'order_number' => $o->order_number,
+                    'created_at' => optional($o->order_date)->toIso8601String(),
+                    'updated_at' => optional($o->updated_at)->toIso8601String(),
+                    'status'     => $o->status ?? '-',
+                    'patient'    => [
+                        'name' => $o->patient_name,
+                        'id'   => $o->patient_id,
+                    ],
+                    'buyer'      => $o->practice_name,
+                    'seller'     => $o->lab_name,
+                    'source_api' => 'DS Core',
+                    'order_type' => $o->order_type,
+                    'due_date'   => optional($o->due_date)->toIso8601String(),
+                    'details'    => [
+                        'status'       => $o->status,
+                        'order_type'   => $o->order_type,
+                        'order_number' => $o->order_number,
+                        'order_id'     => $o->order_id,
+                        'date_created' => optional($o->order_date)->toIso8601String(),
+                        'due_date'     => optional($o->due_date)->toIso8601String(),
+                        'shipped_date' => optional($o->shipped_date)->toIso8601String(),
+                        'patient' => [
+                            'name' => $o->patient_name,
+                            'id'   => $o->patient_id,
+                        ],
+                        'practice' => [
+                            'name' => $o->practice_name,
+                            'id'   => $o->practice_id,
+                        ],
+                        'lab' => [
+                            'name' => $o->lab_name,
+                            'id'   => $o->lab_id,
+                        ],
+                        'credential' => [
+                            'id'  => $o->credential?->id,
+                            'api' => $o->credential?->api_name,
+                            'name'=> $o->credential?->api_display_name,
+                        ],
+                        'raw' => $o->raw,
+                    ],
+                ];
+            });
         }
-        if ($request->filled('seller')) {
-            $query->where('seller_name', 'like', '%'.$request->string('seller').'%');
-        }
 
-        $orders = $query->get();
-
-        $payload = $orders->map(function (MeditOrder $o) {
-            $platform = $o->credential?->api_name === ApiCredential::MEDIT_LINK
-                ? 'Meditlink'
-                : ($o->credential?->api_display_name ?? 'Unknown');
-
-            return [
-                'id'         => (int)$o->order_number,
-                'created_at' => optional($o->date_created)->toIso8601String(),
-                'updated_at' => optional($o->date_updated)->toIso8601String(),
-                'status'     => $o->status ?? '-',
-                'patient'    => [
-                    'name' => $o->case?->patient_name,
-                    'code' => $o->case?->patient_code,
-                ],
-                'case'       => [
-                    'uuid'   => $o->case_uuid,
-                    'name'   => $o->case?->name,
-                    'status' => $o->case?->status,
-                ],
-                'buyer'      => $o->buyer_name,
-                'seller'     => $o->seller_name,
-                'source_api' => $platform,
-                'details'    => [
-                    'status'                => $o->status,
-                    'date_created'          => optional($o->date_created)->toIso8601String(),
-                    'date_updated'          => optional($o->date_updated)->toIso8601String(),
-                    'date_desired_delivery' => optional($o->date_desired_delivery)->toIso8601String(),
-                    'buyer' => [
-                        'uuid' => $o->buyer_group_uuid,
-                        'name' => $o->buyer_name,
-                        'type' => $o->buyer_type,
-                    ],
-                    'seller' => [
-                        'uuid' => $o->seller_group_uuid,
-                        'name' => $o->seller_name,
-                        'type' => $o->seller_type,
-                    ],
-                    'case' => [
-                        'uuid'         => $o->case_uuid,
-                        'name'         => $o->case?->name,
-                        'status'       => $o->case?->status,
-                        'patient_name' => $o->case?->patient_name,
-                        'patient_code' => $o->case?->patient_code,
-                    ],
-                    'credential' => [
-                        'id'  => $o->credential?->id,
-                        'api' => $o->credential?->api_name,
-                        'name'=> $o->credential?->api_display_name,
-                    ],
-                    'raw' => $o->raw,
-                ],
-                'case_info'  => ['files' => []],
-            ];
-        })->values();
+        // Merge and sort by created_at descending
+        $allOrders = $meditOrders->concat($dscoreOrders)
+            ->sortByDesc('created_at')
+            ->values();
 
         return response()->json([
             'success' => true,
             'data' => [
-                'orders'      => $payload,
-                'total_count' => $payload->count(),
-                'api_statuses'=> ['database' => ['status' => 'success', 'message' => 'Loaded from DB']],
+                'orders'       => $allOrders,
+                'total_count'  => $allOrders->count(),
+                'medit_count'  => $meditOrders->count(),
+                'dscore_count' => $dscoreOrders->count(),
+                'api_statuses' => ['database' => ['status' => 'success', 'message' => 'Loaded from DB']],
             ],
         ]);
     }

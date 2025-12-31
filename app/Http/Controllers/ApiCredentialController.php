@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\ApiCredential;
+use App\Services\DScoreService;
 use App\Services\MeditPersistenceService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Validator;
@@ -271,6 +272,60 @@ class ApiCredentialController extends Controller
                 'response'   => null,
                 'error'      => $e->getMessage(),
             ];
+        }
+    }
+
+    /**
+     * Fetch DS Core orders and save to database.
+     */
+    public function fetchDScoreOrders(ApiCredential $apiCredential)
+    {
+        if ($apiCredential->api_name !== ApiCredential::DS_CORE) {
+            return response()->json([
+                'success' => false,
+                'message' => 'This action is only available for DS Core credentials.',
+            ], 400);
+        }
+
+        if (!$apiCredential->access_token || $apiCredential->isTokenExpired()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'DS Core token is missing or expired. Please re-authorize.',
+            ], 401);
+        }
+
+        try {
+            $dsService = new DScoreService();
+            $result = $dsService->fetchAndSaveOrders($apiCredential);
+
+            return response()->json([
+                'success' => true,
+                'message' => "Successfully fetched and saved {$result['count']} orders from DS Core.",
+                'data'    => [
+                    'count'  => $result['count'],
+                    'orders' => collect($result['orders'])->map(fn($o) => [
+                        'id'           => $o->id,
+                        'order_id'     => $o->order_id,
+                        'order_number' => $o->order_number,
+                        'status'       => $o->status,
+                        'patient_name' => $o->patient_name,
+                        'practice_name'=> $o->practice_name,
+                        'lab_name'     => $o->lab_name,
+                        'order_date'   => $o->order_date?->toIso8601String(),
+                        'due_date'     => $o->due_date?->toIso8601String(),
+                    ])->toArray(),
+                ],
+            ]);
+        } catch (\Throwable $e) {
+            Log::error('DS Core fetch orders failed', [
+                'credential_id' => $apiCredential->id,
+                'error'         => $e->getMessage(),
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to fetch DS Core orders: ' . $e->getMessage(),
+            ], 500);
         }
     }
 }
