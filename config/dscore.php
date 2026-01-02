@@ -11,10 +11,10 @@ return [
     'auth_url'  => env('DSCORE_AUTH_URL', 'https://r2.dscore.com/secureLogin'),
 
     // OAuth token endpoint (IMPORTANT: sandbox R2 endpoint)
-    'token_url' => env('DSCORE_TOKEN_URL', 'https://api.r2.dscore.com/vibeta/auth/token'),
+    'token_url' => env('DSCORE_TOKEN_URL', 'https://api.r2.dscore.com/v1beta/auth/token'),
 
     // Orders endpoint (sandbox R2)
-    'orders_url' => env('DSCORE_ORDERS_URL', 'https://api.r2.dscore.com/vibeta/orders'),
+    'orders_url' => env('DSCORE_ORDERS_URL', 'https://api.r2.dscore.com/v1beta/orders'),
 
     'client_id'     => env('DSCORE_CLIENT_ID'),
     'client_secret' => env('DSCORE_CLIENT_SECRET'),
@@ -26,5 +26,5 @@ return [
     ),
 
     // If DS Core publishes scopes, configure here; otherwise DS can ignore it
-    'scope' => env('DSCORE_SCOPE', 'openid'),
+    'scope' => env('DSCORE_SCOPE', 'openid profile email external_api'),
 ];

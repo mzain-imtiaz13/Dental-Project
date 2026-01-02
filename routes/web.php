@@ -83,6 +83,11 @@ Route::middleware('auth')->group(function () {
         [ApiCredentialController::class, 'test']
     )->name('api-credentials.test');
 
+    Route::post(
+        'api-credentials/{apiCredential}/fetch-dscore-orders',
+        [ApiCredentialController::class, 'fetchDScoreOrders']
+    )->name('api-credentials.fetch-dscore-orders');
+
     /*
     |--------------------------------------------------------------------------
     | OAuth Flows
