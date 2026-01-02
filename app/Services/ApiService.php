@@ -39,7 +39,6 @@ class ApiService
             'Content-Type'          => 'application/json',
             'x-meditlink-client-id' => $this->credential->client_id,
         ];
-
         // Optionally include group uuid if saved
         $uuid = $this->credential->additional_config['group_uuid'] ?? env('MEDIT_GROUP_UUID');
         if (!empty($uuid)) $headers['x-meditlink-group-uuid'] = $uuid;
